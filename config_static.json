@@ -1,0 +1,67 @@
+{
+    "paths": {
+        "config_static_path": "config_static.json",
+        "config_dynamic_path": "config_dynamic.json",
+        "notify_path": "notify.json",
+        "backlog_path": "backlog.json",
+        "completed_today_path": "completed_today.json",
+        "tray_icon": "icons/icon.png",
+        "delete_icon": "icons/delete.png",
+        "edit_icon": "icons/edit.png",
+        "recurring_icon": "icons/repeat.png",
+        "add_notify_window_icon": "icons/add.png",
+        "notify_list_window_icon": "icons/list.png",
+        "settings_window_icon": "icons/settings.png",
+        "exit_icon": "icons/exit.png"
+    },
+    "fullscreen_reminder": {
+        "bg_color": "#000000",
+        "text_color": "#ffffff"
+    },
+    "add_notify_dialog": {
+        "notify_text_label": "Title:",
+        "notify_time_label": "Time:",
+        "notify_icon_label": "Icon:",
+        "no_icon_text": "No Icon",
+        "recurrence_label": "Recurrence",
+        "recurrence_types": ["One-time", "Daily", "Weekly", "Monthly", "Yearly"],
+        "week_days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "monthly_day_label": "Day:",
+        "yearly_month_label": "Month:",
+        "yearly_day_label": "Day:",
+        "month_names": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+        "notify_icons": [
+            {"name": "Work", "path": "icons/work.png"},
+            {"name": "Personal", "path": "icons/home.png"},
+            {"name": "Health", "path": "icons/health.png"},
+            {"name": "Shopping", "path": "icons/shopping.png"}
+        ],
+        "stylesheet": "QDialog { background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI'; } QLabel { color: #ffffff; font-weight: 500; } QLineEdit, QTimeEdit, QDateEdit, QComboBox { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 4px; padding: 4px; color: #ffffff; font-size: 12px; } QLineEdit:focus, QTimeEdit:focus, QDateEdit:focus, QComboBox:focus { border-color: #0d7377; } QComboBox::drop-down { border: none; background-color: #444444; border-radius: 2px; width: 16px; } QComboBox::down-arrow { image: none; border: 1px solid #ffffff; border-top: none; border-right: none; width: 5px; height: 5px; margin: 2px; transform: rotate(-45deg); } QComboBox QAbstractItemView { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 2px; color: #ffffff; selection-background-color: #0d7377; } QPushButton { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 4px; padding: 4px 8px; color: #ffffff; font-weight: 500; min-width: 40px; } QPushButton:hover { background-color: #3e3e3e; } QPushButton:pressed { background-color: #1e1e1e; } QPushButton:checked { background-color: #0d7377; } QGroupBox { font-weight: 500; border: 1px solid #444444; border-radius: 4px; margin: 4px 0; padding-top: 5px; } QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }",
+        "window_title": "Add Reminder",
+        "edit_window_title": "Edit Reminder",
+        "ok_button": "OK",
+        "save_button": "Save",
+        "cancel_button": "Cancel",
+        "notify_date_label": "Date:"
+    },
+    "notify_list_dialog": {
+        "window_title": "Reminder List",
+        "add_reminder_button": "Add Reminder",
+        "add_tooltip": "Add Reminder",
+        "edit_tooltip": "Edit Reminder",
+        "delete_tooltip": "Complete Reminder",
+        "reminder_done_title": "Completed",
+        "reminder_done_message": "Reminder '{reminder}' completed and added to archive."
+    },
+    "settings_dialog": {
+        "window_title": "Settings",
+        "autostart_label": "Run on startup:",
+        "interval_label": "Check Interval (sec):"
+    },
+    "tray": {
+        "tray_tooltip": "Reminder Application",
+        "open_reminders_action": "Open Reminders",
+        "settings_action": "Settings",
+        "exit_action": "Exit"
+    }
+}

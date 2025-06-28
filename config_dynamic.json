@@ -1,0 +1,28 @@
+{
+    "add_notify_dialog": {
+        "window_pos": {
+            "x": 611,
+            "y": 287,
+            "width": 460,
+            "height": 428
+        }
+    },
+    "notify_list_dialog": {
+        "window_pos": {
+            "x": 520,
+            "y": 553,
+            "width": 609,
+            "height": 408
+        }
+    },
+    "settings_dialog": {
+        "window_pos": {
+            "x": 766,
+            "y": 516,
+            "width": 445,
+            "height": 97
+        },
+        "autostart": true,
+        "reminder_check_interval_sec": 15
+    }
+}
