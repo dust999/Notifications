@@ -1,9 +1,41 @@
-# 🚀 Notifications for Desktop — 100% AI Coding
+🚀 Notifications for Desktop — 100% AI Coding
+----
+✨ AI Contributions: Grok 80% · Claude 15% · GPT 5%
 
-✨ **AI Contributions**: Grok 80% · Claude 15% · GPT 5%
+✅ Platform: Windows
 
-✅ **Platform**: Windows
+⚙️ Installation & Usage
+---
+Requirements:
+| # | Requirments |
+|---|-------------|
+|1|Python (tested with Python 3.10 or higher)|
+|2|pip|
+|3|PyQt6|
 
+🔧 Quick Start
+---
+Install dependencies
+Run the installer script:
+````
+install.bat
+````
+This will automatically install all required Python packages via pip.
+
+Run the app
+---
+Start the app using:
+````
+start.bat
+````
+
+🐍 Debug mode (optional)
+If you’d like to run the app directly for debugging:
+Rename app.pyw → app.py
+Run it from the console:
+````
+python app.py
+````
 ---
 
 ## 📸 Screenshots & Demo
