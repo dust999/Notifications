@@ -1,1 +1,40 @@
-[]
+[
+    {
+        "id": "7b713864-8ab8-4e9a-a034-41d3a2cdf0cc",
+        "text": "One more task",
+        "time": "17:28",
+        "icon": "icons/home.png",
+        "recurrence_type": "weekly",
+        "weekly_days": [
+            5,
+            6
+        ],
+        "recurring": true
+    },
+    {
+        "id": "b4e2c664-6f7d-4713-a4f8-2520d62ead28",
+        "text": "One task",
+        "time": "17:29",
+        "icon": "icons/shopping.png",
+        "recurrence_type": "daily",
+        "recurring": true
+    },
+    {
+        "id": "206e2f57-024c-4bec-98ee-4b534027e9c9",
+        "text": "More task today",
+        "time": "17:29",
+        "icon": "icons/health.png",
+        "recurrence_type": "yearly",
+        "yearly_month": 6,
+        "yearly_day": 28,
+        "recurring": true
+    },
+    {
+        "id": "630a39fe-69c1-470a-a51c-88d89f6d61ec",
+        "text": "New task 2",
+        "time": "17:28",
+        "icon": "icons/work.png",
+        "recurrence_type": "daily",
+        "recurring": true
+    }
+]
