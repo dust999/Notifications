@@ -9,7 +9,7 @@
 Requirements:
 | # | Requirments |
 |---|-------------|
-|1|Python (tested with Python 3.10 or higher)|
+|1|Python (tested with Python 3.10 or higher) + PATH (please do it manually at first)|
 |2|pip|
 |3|PyQt6|
 
