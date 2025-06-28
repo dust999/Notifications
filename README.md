@@ -31,7 +31,9 @@ start.bat
 
 🐍 Debug mode (optional)
 If you’d like to run the app directly for debugging:
+
 Rename app.pyw → app.py
+
 Run it from the console:
 ````
 python app.py
@@ -43,7 +45,7 @@ python app.py
 See the app in action! All images and GIFs are in the [Images folder](https://github.com/dust999/Notifications/tree/main/Images).
 
 - 🎞️ [Demo GIF] — quick preview of notifications in action
-![Demo GIF](https://github.com/dust999/Notifications/raw/main/Images/sample.gif)|
+![Demo GIF](https://github.com/dust999/Notifications/raw/main/Images/sample.gif)
 
 ### Screenshots
 
