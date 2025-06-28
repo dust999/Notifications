@@ -30,6 +30,7 @@ start.bat
 ````
 
 🐍 Debug mode (optional)
+---
 If you’d like to run the app directly for debugging:
 
 Rename app.pyw → app.py
