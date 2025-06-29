@@ -24,17 +24,56 @@
         "notify_icon_label": "Icon:",
         "no_icon_text": "No Icon",
         "recurrence_label": "Recurrence",
-        "recurrence_types": ["One-time", "Daily", "Weekly", "Monthly", "Yearly"],
-        "week_days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "recurrence_types": [
+            "One-time",
+            "Daily",
+            "Weekly",
+            "Monthly",
+            "Yearly"
+        ],
+        "week_days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+        ],
         "monthly_day_label": "Day:",
         "yearly_month_label": "Month:",
         "yearly_day_label": "Day:",
-        "month_names": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+        "month_names": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+        ],
         "notify_icons": [
-            {"name": "Work", "path": "icons/work.png"},
-            {"name": "Personal", "path": "icons/home.png"},
-            {"name": "Health", "path": "icons/health.png"},
-            {"name": "Shopping", "path": "icons/shopping.png"}
+            {
+                "name": "Work",
+                "path": "icons/work.png"
+            },
+            {
+                "name": "Personal",
+                "path": "icons/home.png"
+            },
+            {
+                "name": "Health",
+                "path": "icons/health.png"
+            },
+            {
+                "name": "Shopping",
+                "path": "icons/shopping.png"
+            }
         ],
         "stylesheet": "QDialog { background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI'; } QLabel { color: #ffffff; font-weight: 500; } QLineEdit, QTimeEdit, QDateEdit, QComboBox { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 4px; padding: 4px; color: #ffffff; font-size: 12px; } QLineEdit:focus, QTimeEdit:focus, QDateEdit:focus, QComboBox:focus { border-color: #0d7377; } QComboBox::drop-down { border: none; background-color: #444444; border-radius: 2px; width: 16px; } QComboBox::down-arrow { image: none; border: 1px solid #ffffff; border-top: none; border-right: none; width: 5px; height: 5px; margin: 2px; } QComboBox QAbstractItemView { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 2px; color: #ffffff; selection-background-color: #0d7377; } QPushButton { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 4px; padding: 4px 8px; color: #ffffff; font-weight: 500; min-width: 40px; } QPushButton:hover { background-color: #3e3e3e; } QPushButton:pressed { background-color: #1e1e1e; } QPushButton:checked { background-color: #0d7377; } QGroupBox { font-weight: 500; border: 1px solid #444444; border-radius: 4px; margin: 4px 0; padding-top: 5px; } QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }",
         "window_title": "Add Reminder",
