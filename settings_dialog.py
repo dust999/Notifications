@@ -1,6 +1,7 @@
 import winreg
 import sys
 import os
+import datetime
 from PyQt6 import QtWidgets, QtGui
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -119,20 +120,56 @@ class SettingsDialog(QtWidgets.QDialog):
     def is_auto_start_enabled(self):
         """Check if auto-start is currently enabled in Windows registry"""
         try:
-            key = winreg.HKEY_CURRENT_USER
-            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            with winreg.OpenKey(key, key_path, 0, winreg.KEY_READ) as reg_key:
-                value, _ = winreg.QueryValueEx(reg_key, "ReminderApp")
+            key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_READ) as reg_key:
+                value, _ = winreg.QueryValueEx(reg_key, "NotifyApp")
                 return bool(value)
-        except (WindowsError, FileNotFoundError):
+        except:
             return False
+
+    def enable_autostart(self, exe_path):
+        """Enable autostart in Windows registry"""
+        try:
+            bat_path = os.path.join(os.path.dirname(exe_path), "start.bat")
+            full_path = f'"{bat_path}"'
+            key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as reg:
+                winreg.SetValueEx(reg, "NotifyApp", 0, winreg.REG_SZ, full_path)
+            with open("autostart_log.txt", "a") as log:
+                log.write(f"[{datetime.datetime.now()}] Enabled autostart for NotifyApp: {full_path}\n")
+        except Exception as e:
+            with open("autostart_log.txt", "a") as log:
+                log.write(f"[{datetime.datetime.now()}] Error enabling autostart for NotifyApp: {e}\n")
+
+    def disable_autostart(self):
+        """Disable autostart in Windows registry"""
+        try:
+            key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as reg:
+                winreg.DeleteValue(reg, "NotifyApp")
+            with open("autostart_log.txt", "a") as log:
+                log.write(f"[{datetime.datetime.now()}] Disabled autostart for NotifyApp\n")
+        except Exception as e:
+            with open("autostart_log.txt", "a") as log:
+                log.write(f"[{datetime.datetime.now()}] Error disabling autostart for NotifyApp: {e}\n")
 
     def toggle_auto_run(self, state):
         """Toggle auto-start functionality"""
         enabled = bool(state)
-        success = self.set_auto_start(enabled)
+        exe_path = os.path.realpath(sys.argv[0])
 
-        if not success:
+        try:
+            if enabled:
+                self.enable_autostart(exe_path)
+            else:
+                self.disable_autostart()
+
+            # Update config
+            self.config_dynamic["settings_dialog"]["autostart"] = enabled
+            # Call the callback if provided
+            if self.toggle_auto_run_callback:
+                self.toggle_auto_run_callback(enabled)
+        except:
             # If setting failed, revert checkbox state
             self.auto_run_checkbox.blockSignals(True)
             self.auto_run_checkbox.setChecked(not enabled)
@@ -141,62 +178,9 @@ class SettingsDialog(QtWidgets.QDialog):
             # Show error message
             QtWidgets.QMessageBox.warning(
                 self,
-                "Error",
-                "Failed to modify auto-start settings. Please check your permissions."
+                "Ошибка",
+                "Не удалось изменить настройки автозапуска. Проверьте ваши права доступа."
             )
-        else:
-            # Update config
-            self.config_dynamic["settings_dialog"]["autostart"] = enabled
-            # Call the callback if provided
-            if self.toggle_auto_run_callback:
-                self.toggle_auto_run_callback(enabled)
-
-    def set_auto_start(self, enabled):
-        """Set or remove auto-start registry entry"""
-        try:
-            key = winreg.HKEY_CURRENT_USER
-            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-            with winreg.OpenKey(key, key_path, 0, winreg.KEY_WRITE) as reg_key:
-                if enabled:
-                    # Get the path to the startup file
-                    current_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-
-                    # Look for Start.bat in the same directory as the app
-                    start_bat_path = os.path.join(current_dir, "Start.bat")
-
-                    if os.path.exists(start_bat_path):
-                        # Use the batch file if it exists
-                        exe_path = f'"{start_bat_path}"'
-                    elif getattr(sys, 'frozen', False):
-                        # Running as compiled executable
-                        exe_path = f'"{sys.executable}"'
-                    else:
-                        # Running as script - use pythonw to avoid console window
-                        main_script = os.path.abspath(sys.argv[0])
-                        if main_script.endswith('.pyw'):
-                            # Use pythonw for .pyw files to avoid console window
-                            python_exe = sys.executable.replace('python.exe', 'pythonw.exe')
-                            exe_path = f'"{python_exe}" "{main_script}"'
-                        else:
-                            exe_path = f'"{sys.executable}" "{main_script}"'
-
-                    # Set the registry value
-                    winreg.SetValueEx(reg_key, "ReminderApp", 0, winreg.REG_SZ, exe_path)
-                    print(f"Auto-start enabled with path: {exe_path}")
-                else:
-                    # Remove the registry value
-                    try:
-                        winreg.DeleteValue(reg_key, "ReminderApp")
-                        print("Auto-start disabled")
-                    except FileNotFoundError:
-                        # Value doesn't exist, which is fine
-                        pass
-
-            return True
-        except Exception as e:
-            print(f"Error setting auto-start: {e}")
-            return False
 
     def get_config_data(self):
         """Get updated configuration data"""
