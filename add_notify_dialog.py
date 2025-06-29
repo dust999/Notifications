@@ -3,6 +3,7 @@ from PyQt6 import QtWidgets, QtGui, QtCore
 import uuid
 from utils import save_json
 import datetime
+import calendar
 
 class AddNotifyDialog(QtWidgets.QDialog):
     def __init__(self, backlog, config_static, config_dynamic, parent=None, reminder_data=None):
@@ -64,46 +65,50 @@ class AddNotifyDialog(QtWidgets.QDialog):
 
         now = datetime.datetime.now() + datetime.timedelta(minutes=5)
 
-        # Настройка поля времени с большими стрелками
-        self.time_input = QtWidgets.QTimeEdit()
-        self.time_input.setDisplayFormat("HH:mm")
-        self.time_input.setTime(QtCore.QTime(now.hour, now.minute))
-
+        # Стили для всех виджетов с кастомными стрелками
         icons_path = os.path.abspath("icons")
         arrow_up_path = os.path.join(icons_path, "arrow-up-white.svg").replace("\\", "/")
         arrow_down_path = os.path.join(icons_path, "arrow-down-white.svg").replace("\\", "/")
-
-        # Увеличиваем размер стрелок через стили
-        self.time_input.setStyleSheet(f"""
-            QTimeEdit {{
+        arrow_styles = f"""
+            QTimeEdit, QDateEdit, QSpinBox {{
                 padding-right: 30px;
-                min-height: 25px;
+                min-height: 30px;
                 font-size: 16px;
                 color: #ffffff;
                 background-color: #2e2e2e;
                 border: 1px solid #444444;
                 border-radius: 4px;
             }}
-            QTimeEdit::up-button, QTimeEdit::down-button {{
+            QTimeEdit::up-button, QTimeEdit::down-button,
+            QDateEdit::up-button, QDateEdit::down-button,
+            QSpinBox::up-button, QSpinBox::down-button {{
                 width: 24px;
                 height: 18px;
                 border: none;
                 background: transparent;
             }}
-            QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {{
+            QTimeEdit::up-button:hover, QTimeEdit::down-button:hover,
+            QDateEdit::up-button:hover, QDateEdit::down-button:hover,
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
                 background-color: #444444;
             }}
-            QTimeEdit::up-arrow {{
+            QTimeEdit::up-arrow, QDateEdit::up-arrow, QSpinBox::up-arrow {{
                 width: 16px;
                 height: 16px;
                 image: url("{arrow_up_path}");
             }}
-            QTimeEdit::down-arrow {{
+            QTimeEdit::down-arrow, QDateEdit::down-arrow, QSpinBox::down-arrow {{
                 width: 16px;
                 height: 16px;
                 image: url("{arrow_down_path}");
             }}
-        """)
+        """
+
+        # Настройка поля времени
+        self.time_input = QtWidgets.QTimeEdit()
+        self.time_input.setDisplayFormat("HH:mm")
+        self.time_input.setTime(QtCore.QTime(now.hour, now.minute))
+        self.time_input.setStyleSheet(arrow_styles)
 
         self.icon_combo = QtWidgets.QComboBox()
         self.icon_combo.addItem(self.at_config["no_icon_text"], "")
@@ -138,6 +143,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
         self.date_input.setDisplayFormat("dd.MM.yy")
         self.date_input.setCalendarPopup(True)
         self.date_input.setDate(QtCore.QDate(now.year, now.month, now.day))
+        self.date_input.setStyleSheet(arrow_styles)
         date_layout.addRow(self.at_config.get("notify_date_label", "Date:"), self.date_input)
         self.date_widget.setLayout(date_layout)
         self.date_widget.setVisible(False)
@@ -162,6 +168,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
         self.monthly_day_input = QtWidgets.QSpinBox()
         self.monthly_day_input.setRange(1, 31)
         self.monthly_day_input.setValue(now.day)
+        self.monthly_day_input.setStyleSheet(arrow_styles)
         monthly_layout.addRow(self.at_config["monthly_day_label"], self.monthly_day_input)
         self.monthly_widget.setLayout(monthly_layout)
         self.monthly_widget.setVisible(False)
@@ -176,11 +183,16 @@ class AddNotifyDialog(QtWidgets.QDialog):
         self.yearly_day_input = QtWidgets.QSpinBox()
         self.yearly_day_input.setRange(1, 31)
         self.yearly_day_input.setValue(now.day)
+        self.yearly_day_input.setStyleSheet(arrow_styles)
         yearly_layout.addRow(self.at_config["yearly_month_label"], self.yearly_month_input)
         yearly_layout.addRow(self.at_config["yearly_day_label"], self.yearly_day_input)
         self.yearly_widget.setLayout(yearly_layout)
         self.yearly_widget.setVisible(False)
         main_layout.addWidget(self.yearly_widget)
+
+        # Проверка количества дней в месяце для yearly_day_input
+        self.yearly_month_input.currentIndexChanged.connect(self.update_yearly_day_range)
+        self.update_yearly_day_range()
 
         if self.reminder_data:
             self.text_input.setText(self.reminder_data.get("text"))
@@ -189,7 +201,6 @@ class AddNotifyDialog(QtWidgets.QDialog):
                 self.time_input.setTime(QtCore.QTime(int(time_parts[0]), int(time_parts[1])))
             recurrence_type = self.reminder_data.get("recurrence_type")
             normalized_rec_type = next((rt for rt in self.at_config["recurrence_types"] if rt.lower() == recurrence_type.lower()), "Daily")
-            #self.recurrence_buttons[normalized_rec_type].setChecked(True)
             self.recurrence_buttons[normalized_rec_type].setChecked(True)
             self.update_recurrence(normalized_rec_type)
             if normalized_rec_type == "One-time" and self.reminder_data.get("date"):
@@ -224,10 +235,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
 
     def on_text_input_click(self, event):
         """Обработчик клика по полю ввода текста для показа подсказок"""
-        # Вызываем оригинальный обработчик
         QtWidgets.QLineEdit.mousePressEvent(self.text_input, event)
-
-        # Если поле пустое, показываем все доступные подсказки
         if not self.text_input.text().strip():
             completer = self.text_input.completer()
             if completer:
@@ -249,6 +257,14 @@ class AddNotifyDialog(QtWidgets.QDialog):
         finally:
             self.updating = False
 
+    def update_yearly_day_range(self):
+        """Обновляет диапазон дней для yearly_day_input в зависимости от выбранного месяца"""
+        month = self.yearly_month_input.currentIndex() + 1
+        max_days = calendar.monthrange(2024, month)[1] if month != 2 else 29  # Всегда 29 для февраля
+        self.yearly_day_input.setRange(1, max_days)
+        if self.yearly_day_input.value() > max_days:
+            self.yearly_day_input.setValue(max_days)
+
     def get_notify_data(self):
         reminder_id = self.reminder_data.get("id") if self.reminder_data else str(uuid.uuid4())
         data = {
@@ -268,16 +284,26 @@ class AddNotifyDialog(QtWidgets.QDialog):
                     data["weekly_days"] = [idx for idx, btn in self.day_buttons.items() if btn.isChecked()]
                     data["recurring"] = True
                 elif rec_type == "Monthly":
-                    data["monthly_day"] = self.monthly_day_input.value()
+                    max_days = calendar.monthrange(now.year, now.month)[1] if now.month != 2 else 29  # Всегда 29 для февраля
+                    data["monthly_day"] = min(self.monthly_day_input.value(), max_days)
                     data["recurring"] = True
                 elif rec_type == "Yearly":
                     data["yearly_month"] = self.yearly_month_input.currentIndex() + 1
-                    data["yearly_day"] = self.yearly_day_input.value()
+                    max_days = calendar.monthrange(now.year, data["yearly_month"])[1] if data["yearly_month"] != 2 else 29  # Всегда 29 для февраля
+                    data["yearly_day"] = min(self.yearly_day_input.value(), max_days)
                     data["recurring"] = True
                 else:
                     data["recurring"] = True
                 break
         return data
+
+    def accept(self):
+        self.save_position()
+        super().accept()
+
+    def reject(self):
+        self.save_position()
+        super().reject()
 
     def restore_position(self):
         pos = self.config_dynamic["add_notify_dialog"].get("window_pos")

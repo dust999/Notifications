@@ -17,48 +17,70 @@ class SettingsDialog(QtWidgets.QDialog):
         if icon_path and os.path.exists(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
 
-        # Apply dark theme styling
-        self.setStyleSheet("""
-            QDialog { 
+        # Apply dark theme styling with f-string to avoid .format() issues
+        arrow_up_path = os.path.join(os.path.abspath("icons"), "arrow-up-white.svg").replace("\\", "/")
+        arrow_down_path = os.path.join(os.path.abspath("icons"), "arrow-down-white.svg").replace("\\", "/")
+        self.setStyleSheet(f"""
+            QDialog {{ 
                 background-color: #1e1e1e; 
                 color: #ffffff; 
-                font-family: 'Segoe UI'; 
-            }
-            QCheckBox { 
+                font-family: 'Segoe UI', Arial, sans-serif; 
+            }}
+            QCheckBox {{ 
                 color: #ffffff; 
                 font-size: 12px; 
                 spacing: 8px;
-            }
-            QCheckBox::indicator {
+            }}
+            QCheckBox::indicator {{
                 width: 16px;
                 height: 16px;
                 border: 2px solid #444444;
                 border-radius: 3px;
                 background-color: #2e2e2e;
-            }
-            QCheckBox::indicator:checked {
+            }}
+            QCheckBox::indicator:checked {{
                 background-color: #0d7377;
                 border-color: #1a8c99;
-            }
-            QCheckBox::indicator:hover {
+            }}
+            QCheckBox::indicator:hover {{
                 border-color: #555555;
-            }
-            QLabel { 
+            }}
+            QLabel {{ 
                 color: #ffffff; 
                 font-size: 12px; 
-            }
-            QSpinBox {
+            }}
+            QSpinBox {{
+                padding-right: 30px;
+                min-height: 30px;
+                font-size: 16px;
+                color: #ffffff;
                 background-color: #2e2e2e;
                 border: 1px solid #444444;
                 border-radius: 4px;
-                padding: 4px 8px;
-                color: #ffffff;
-                font-size: 12px;
-            }
-            QSpinBox:focus {
+            }}
+            QSpinBox:focus {{
                 border-color: #0d7377;
-            }
-            QPushButton {
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                width: 24px;
+                height: 18px;
+                border: none;
+                background: transparent;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background-color: #444444;
+            }}
+            QSpinBox::up-arrow {{
+                width: 16px;
+                height: 16px;
+                image: url("{arrow_up_path}");
+            }}
+            QSpinBox::down-arrow {{
+                width: 16px;
+                height: 16px;
+                image: url("{arrow_down_path}");
+            }}
+            QPushButton {{
                 background-color: #2e2e2e;
                 border: 1px solid #444444;
                 border-radius: 6px;
@@ -66,14 +88,14 @@ class SettingsDialog(QtWidgets.QDialog):
                 color: #ffffff;
                 font-weight: 500;
                 min-width: 80px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #3e3e3e;
                 border-color: #555555;
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: #1e1e1e;
-            }
+            }}
         """)
 
         self.setup_ui()
@@ -97,7 +119,7 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addWidget(interval_label)
 
         self.interval_spinbox = QtWidgets.QSpinBox()
-        self.interval_spinbox.setRange(15, 3600)
+        self.interval_spinbox.setRange(5, 3600)
         self.interval_spinbox.setSuffix(" sec")
         self.interval_spinbox.setValue(self.config_dynamic["settings_dialog"]["reminder_check_interval_sec"])
         layout.addWidget(self.interval_spinbox)
@@ -187,3 +209,38 @@ class SettingsDialog(QtWidgets.QDialog):
         self.config_dynamic["settings_dialog"]["reminder_check_interval_sec"] = self.interval_spinbox.value()
         self.config_dynamic["settings_dialog"]["autostart"] = self.auto_run_checkbox.isChecked()
         return self.config_dynamic
+
+    def accept(self):
+        self.save_position()
+        super().accept()
+
+    def reject(self):
+        self.save_position()
+        super().reject()
+
+    def restore_position(self):
+        pos = self.config_dynamic["settings_dialog"].get("window_pos")
+        if pos:
+            screen = QtWidgets.QApplication.primaryScreen().geometry()
+            x = min(pos.get("x", 0), screen.width() - pos.get("width", self.width()))
+            y = max(0, min(pos.get("y", 0), screen.height() - pos.get("height", self.height())))
+            self.move(x, y)
+            if "width" in pos and "height" in pos:
+                self.resize(pos["width"], pos["height"])
+
+    def save_position(self):
+        pos = self.pos()
+        size = self.size()
+        screen = QtWidgets.QApplication.primaryScreen().geometry()
+        self.config_dynamic["settings_dialog"]["window_pos"] = {
+            "x": pos.x(),
+            "y": pos.y(),
+            "width": size.width(),
+            "height": size.height()
+        }
+        from utils import save_json
+        save_json("config_dynamic.json", self.config_dynamic)
+
+    def closeEvent(self, event):
+        self.save_position()
+        super().closeEvent(event)

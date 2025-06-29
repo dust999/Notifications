@@ -3,8 +3,10 @@ from PyQt6 import QtWidgets, QtGui, QtCore
 import datetime
 from utils import save_json
 
+
 class NotifyListDialog(QtWidgets.QDialog):
-    def __init__(self, reminders, mark_done_callback, edit_callback, config_static, config_dynamic, add_callback, parent=None):
+    def __init__(self, reminders, mark_done_callback, edit_callback, config_static, config_dynamic, add_callback,
+                 parent=None):
         super().__init__(parent)
         self.reminders = reminders
         self.mark_reminder_done_callback = mark_done_callback
@@ -60,7 +62,7 @@ class NotifyListDialog(QtWidgets.QDialog):
             month = reminder.get("yearly_month", 1)
             day = reminder.get("yearly_day", 1)
             month_names = self.config_static["add_notify_dialog"]["month_names"]
-            return f"Yearly ({month_names[month-1]} {day})"
+            return f"Yearly ({month_names[month - 1]} {day})"
         else:
             return "One-time"
 
@@ -132,7 +134,8 @@ class NotifyListDialog(QtWidgets.QDialog):
         bottom_layout = QtWidgets.QHBoxLayout()
         bottom_layout.addStretch()
         close_btn = QtWidgets.QPushButton("Close")
-        close_btn.setStyleSheet("QPushButton { background-color: #3e3e3e; border: 1px solid #444444; min-width: 80px; } QPushButton:hover { background-color: #4e4e4e; }")
+        close_btn.setStyleSheet(
+            "QPushButton { background-color: #3e3e3e; border: 1px solid #444444; min-width: 80px; } QPushButton:hover { background-color: #4e4e4e; }")
         close_btn.clicked.connect(self.reject)
         bottom_layout.addWidget(close_btn)
         main_layout.addLayout(bottom_layout)
@@ -145,7 +148,8 @@ class NotifyListDialog(QtWidgets.QDialog):
         self.notify_layout.setSpacing(4)
 
         now = datetime.datetime.now()
-        completed_today_ids = {c["id"] for c in self.config_dynamic.get("completed_today", []) if datetime.datetime.fromisoformat(c["completed_at"]).date() == now.date()}
+        completed_today_ids = {c["id"] for c in self.config_dynamic.get("completed_today", []) if
+                               datetime.datetime.fromisoformat(c["completed_at"]).date() == now.date()}
 
         sorted_reminders = []
         for reminder in self.reminders:
@@ -154,7 +158,8 @@ class NotifyListDialog(QtWidgets.QDialog):
             if time_str:
                 try:
                     recurrence_type = reminder.get("recurrence_type")
-                    effective_date = now.strftime("%Y-%m-%d") if recurrence_type != "once" and not date_str else date_str
+                    effective_date = now.strftime(
+                        "%Y-%m-%d") if recurrence_type != "once" and not date_str else date_str
                     if effective_date:
                         dt = datetime.datetime.fromisoformat(f"{effective_date}T{time_str}:00")
                         sorted_reminders.append((reminder, dt))
@@ -167,7 +172,8 @@ class NotifyListDialog(QtWidgets.QDialog):
 
         for i, reminder in enumerate(sorted_reminders):
             time_str = reminder.get("time")
-            date_str = reminder.get("date", now.strftime("%Y-%m-%d")) if reminder.get("recurrence_type") != "once" else reminder.get("date")
+            date_str = reminder.get("date", now.strftime("%Y-%m-%d")) if reminder.get(
+                "recurrence_type") != "once" else reminder.get("date")
             recurrence_type = reminder.get("recurrence_type")
             is_overdue = False
             is_completed = reminder["id"] in completed_today_ids
@@ -206,7 +212,8 @@ class NotifyListDialog(QtWidgets.QDialog):
             # Icon
             icon_label = QtWidgets.QLabel()
             if reminder.get("icon") and os.path.exists(reminder["icon"]):
-                pixmap = QtGui.QPixmap(reminder["icon"]).scaled(20, 20, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+                pixmap = QtGui.QPixmap(reminder["icon"]).scaled(20, 20, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                                                                QtCore.Qt.TransformationMode.SmoothTransformation)
                 icon_label.setPixmap(pixmap)
             else:
                 icon_label.setText("📅")
@@ -217,8 +224,11 @@ class NotifyListDialog(QtWidgets.QDialog):
             # Recurrence indicator
             recurrence_label = QtWidgets.QLabel()
             if recurrence_type != "once":
-                if self.config_static["paths"].get("recurring_icon") and os.path.exists(self.config_static["paths"]["recurring_icon"]):
-                    pixmap = QtGui.QPixmap(self.config_static["paths"]["recurring_icon"]).scaled(14, 14, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+                if self.config_static["paths"].get("recurring_icon") and os.path.exists(
+                        self.config_static["paths"]["recurring_icon"]):
+                    pixmap = QtGui.QPixmap(self.config_static["paths"]["recurring_icon"]).scaled(14, 14,
+                                                                                                 QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                                                                                                 QtCore.Qt.TransformationMode.SmoothTransformation)
                     recurrence_label.setPixmap(pixmap)
                 else:
                     recurrence_label.setText("🔄")
@@ -234,7 +244,8 @@ class NotifyListDialog(QtWidgets.QDialog):
             title_label = QtWidgets.QLabel(reminder["text"])
             title_label.setStyleSheet("QLabel { font-size: 12px; font-weight: 600; color: #ffffff; }")
             if is_completed:
-                title_label.setStyleSheet("QLabel { font-size: 12px; font-weight: 600; color: #888888; text-decoration: line-through; }")
+                title_label.setStyleSheet(
+                    "QLabel { font-size: 12px; font-weight: 600; color: #888888; text-decoration: line-through; }")
             elif is_overdue:
                 title_label.setStyleSheet("QLabel { font-size: 12px; font-weight: 600; color: #aa5555; }")
 
@@ -260,23 +271,27 @@ class NotifyListDialog(QtWidgets.QDialog):
             button_layout.setSpacing(6)
 
             edit_btn = QtWidgets.QPushButton()
-            if self.config_static["paths"].get("edit_icon") and os.path.exists(self.config_static["paths"]["edit_icon"]):
+            if self.config_static["paths"].get("edit_icon") and os.path.exists(
+                    self.config_static["paths"]["edit_icon"]):
                 edit_btn.setIcon(QtGui.QIcon(self.config_static["paths"]["edit_icon"]))
             else:
                 edit_btn.setText("✏️")
             edit_btn.setFixedSize(28, 28)
-            edit_btn.setStyleSheet("QPushButton { background-color: #3e3e3e; border: 1px solid #444444; border-radius: 4px; padding: 4px; } QPushButton:hover { background-color: #4e4e4e; }")
+            edit_btn.setStyleSheet(
+                "QPushButton { background-color: #3e3e3e; border: 1px solid #444444; border-radius: 4px; padding: 4px; } QPushButton:hover { background-color: #4e4e4e; }")
             edit_btn.setToolTip(self.tl_config["edit_tooltip"])
             edit_btn.clicked.connect(lambda _, r=reminder: self.edit_reminder(r))
             button_layout.addWidget(edit_btn)
 
             complete_btn = QtWidgets.QPushButton()
-            if self.config_static["paths"].get("delete_icon") and os.path.exists(self.config_static["paths"]["delete_icon"]):
+            if self.config_static["paths"].get("delete_icon") and os.path.exists(
+                    self.config_static["paths"]["delete_icon"]):
                 complete_btn.setIcon(QtGui.QIcon(self.config_static["paths"]["delete_icon"]))
             else:
                 complete_btn.setText("✓")
             complete_btn.setFixedSize(28, 28)
-            complete_btn.setStyleSheet("QPushButton { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 4px; padding: 4px; } QPushButton:hover { background-color: #3e3e3e; }")
+            complete_btn.setStyleSheet(
+                "QPushButton { background-color: #2e2e2e; border: 1px solid #444444; border-radius: 4px; padding: 4px; } QPushButton:hover { background-color: #3e3e3e; }")
             complete_btn.setToolTip(self.tl_config["delete_tooltip"])
             complete_btn.clicked.connect(lambda _, r=reminder: self.mark_reminder_done(r))
             button_layout.addWidget(complete_btn)
@@ -301,7 +316,8 @@ class NotifyListDialog(QtWidgets.QDialog):
         if icon_path and os.path.exists(icon_path):
             self.add_reminder_btn.setIcon(QtGui.QIcon(icon_path))
         self.add_reminder_btn.setText(self.tl_config["add_reminder_button"])
-        self.add_reminder_btn.setStyleSheet("QPushButton { background-color: #0d7377; border: 1px solid #1a8c99; font-weight: 600; } QPushButton:hover { background-color: #1a8c99; } QPushButton:pressed { background-color: #0a5d61; }")
+        self.add_reminder_btn.setStyleSheet(
+            "QPushButton { background-color: #0d7377; border: 1px solid #1a8c99; font-weight: 600; } QPushButton:hover { background-color: #1a8c99; } QPushButton:pressed { background-color: #0a5d61; }")
         self.add_reminder_btn.clicked.connect(self.add_new_reminder)
         bottom_layout.addWidget(self.add_reminder_btn)
 
@@ -310,7 +326,8 @@ class NotifyListDialog(QtWidgets.QDialog):
         # Close button
         close_btn = QtWidgets.QPushButton()
         close_btn.setText(self.tl_config.get("close_button", "Close"))
-        close_btn.setStyleSheet("QPushButton { background-color: #3e3e3e; border: 1px solid #444444; min-width: 80px; } QPushButton:hover { background-color: #4e4e4e; }")
+        close_btn.setStyleSheet(
+            "QPushButton { background-color: #3e3e3e; border: 1px solid #444444; min-width: 80px; } QPushButton:hover { background-color: #4e4e4e; }")
         close_btn.clicked.connect(self.reject)
         bottom_layout.addWidget(close_btn)
 
@@ -352,3 +369,11 @@ class NotifyListDialog(QtWidgets.QDialog):
     def closeEvent(self, event):
         self.save_position()
         super().closeEvent(event)
+
+    def accept(self):
+        self.save_position()
+        super().accept()
+
+    def reject(self):
+        self.save_position()
+        super().reject()
