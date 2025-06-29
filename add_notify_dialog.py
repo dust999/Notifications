@@ -1,7 +1,7 @@
 import os
 from PyQt6 import QtWidgets, QtGui, QtCore
 import uuid
-from utils import save_json
+from utils import save_json, load_json
 import datetime
 import calendar
 
@@ -27,6 +27,9 @@ class AddNotifyDialog(QtWidgets.QDialog):
 
         self.setup_ui()
         self.restore_position()
+        
+        # Reload backlog to ensure we have the latest data
+        self.reload_backlog()
 
     def setup_ui(self):
         main_layout = QtWidgets.QVBoxLayout()
@@ -36,36 +39,21 @@ class AddNotifyDialog(QtWidgets.QDialog):
         form_layout = QtWidgets.QFormLayout()
         form_layout.setSpacing(6)
 
-        # Настройка поля ввода текста с улучшенным автокомплитом
+        # Set up text input field with improved autocomplete
         self.text_input = QtWidgets.QLineEdit()
-
-        # Собираем все уникальные тексты из backlog и текущих напоминаний
-        suggestions = []
-
-        # Добавляем из backlog
-        if self.backlog:
-            suggestions.extend([item.get("text", "") for item in self.backlog if item.get("text")])
-
-        # Добавляем из текущих напоминаний (если они переданы через parent)
-        if hasattr(self.parent(), 'reminders') and self.parent().reminders:
-            suggestions.extend([reminder.get("text", "") for reminder in self.parent().reminders if reminder.get("text")])
-
-        # Убираем дубликаты и пустые строки
-        suggestions = list(set(filter(None, suggestions)))
-
-        if suggestions:
-            completer = QtWidgets.QCompleter(suggestions, self)
-            completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
-            completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
-            completer.setMaxVisibleItems(10)  # Показываем максимум 10 подсказок
-            self.text_input.setCompleter(completer)
-
-            # Показываем подсказки при клике на пустое поле
-            self.text_input.mousePressEvent = self.on_text_input_click
+        
+        # Connect text changed signal for real-time suggestions
+        self.text_input.textChanged.connect(self.update_suggestions)
+        
+        # Create completer with backlog suggestions
+        self.update_suggestions()
+        
+        # Show suggestions when clicking on empty field
+        self.text_input.mousePressEvent = self.on_text_input_click
 
         now = datetime.datetime.now() + datetime.timedelta(minutes=5)
 
-        # Стили для всех виджетов с кастомными стрелками
+        # Styles for all widgets with custom arrows and flat calendar
         icons_path = os.path.abspath("icons")
         arrow_up_path = os.path.join(icons_path, "arrow-up-white.svg").replace("\\", "/")
         arrow_down_path = os.path.join(icons_path, "arrow-down-white.svg").replace("\\", "/")
@@ -95,16 +83,119 @@ class AddNotifyDialog(QtWidgets.QDialog):
             QTimeEdit::up-arrow, QDateEdit::up-arrow, QSpinBox::up-arrow {{
                 width: 16px;
                 height: 16px;
-                image: url("{arrow_up_path}");
+                image: url('{arrow_up_path}');
             }}
             QTimeEdit::down-arrow, QDateEdit::down-arrow, QSpinBox::down-arrow {{
                 width: 16px;
                 height: 16px;
-                image: url("{arrow_down_path}");
+                image: url('{arrow_down_path}');
+            }}
+            QDateEdit::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border: none;
+                background: transparent;
+            }}
+            QDateEdit::down-arrow {{
+                image: url('{arrow_down_path}');
+                width: 16px;
+                height: 16px;
+            }}
+            QDateEdit::down-arrow:on {{  /* when calendar is open */
+                top: 1px;
+                left: 1px;
+            }}
+            QCalendarWidget {{
+                background-color: #232323;
+                color: #fff;
+                border: 1px solid #444444;
+                border-radius: 8px;
+            }}
+            QCalendarWidget QToolButton {{
+                background: #2e2e2e;
+                color: #fff;
+                border: none;
+                font-size: 14px;
+                font-weight: 600;
+                margin: 2px;
+                padding: 4px 8px;
+                border-radius: 4px;
+                min-width: 20px;
+                min-height: 20px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background: #444444;
+            }}
+            QCalendarWidget QToolButton::menu-button {{
+                border: none;
+                width: 20px;
+                height: 20px;
+            }}
+            QCalendarWidget QToolButton::menu-arrow {{
+                image: url('{arrow_down_path}');
+                width: 12px;
+                height: 12px;
+                subcontrol-position: center;
+            }}
+            QCalendarWidget QToolButton::up-arrow {{
+                image: url('{arrow_up_path}');
+                width: 12px;
+                height: 12px;
+                subcontrol-position: center;
+            }}
+            QCalendarWidget QToolButton::down-arrow {{
+                image: url('{arrow_down_path}');
+                width: 12px;
+                height: 12px;
+                subcontrol-position: center;
+            }}
+            QCalendarWidget QMenu {{
+                background: #232323;
+                color: #fff;
+                border: 1px solid #444444;
+            }}
+            QCalendarWidget QSpinBox {{
+                background: #2e2e2e;
+                color: #fff;
+                border: 1px solid #444444;
+                border-radius: 4px;
+            }}
+            QCalendarWidget QSpinBox::up-button, QCalendarWidget QSpinBox::down-button {{
+                width: 16px;
+                height: 12px;
+                border: none;
+                background: transparent;
+            }}
+            QCalendarWidget QSpinBox::up-arrow {{
+                image: url('{arrow_up_path}');
+                width: 12px;
+                height: 12px;
+            }}
+            QCalendarWidget QSpinBox::down-arrow {{
+                image: url('{arrow_down_path}');
+                width: 12px;
+                height: 12px;
+            }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: #232323;
+            }}
+            QCalendarWidget QAbstractItemView:enabled {{
+                color: #fff;
+                background: #232323;
+                selection-background-color: #0d7377;
+                selection-color: #fff;
+            }}
+            QCalendarWidget QAbstractItemView:disabled {{
+                color: #888;
+            }}
+            QCalendarWidget QAbstractItemView:selected {{
+                background: #0d7377;
+                color: #fff;
             }}
         """
 
-        # Настройка поля времени
+        # Set up time input field
         self.time_input = QtWidgets.QTimeEdit()
         self.time_input.setDisplayFormat("HH:mm")
         self.time_input.setTime(QtCore.QTime(now.hour, now.minute))
@@ -157,7 +248,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
             btn = QtWidgets.QPushButton(day)
             btn.setCheckable(True)
             weekly_layout.addWidget(btn)
-            self.day_buttons[idx] = btn  # Используем индекс вместо названия
+            self.day_buttons[idx] = btn  # Use index instead of name
         self.weekly_widget.setLayout(weekly_layout)
         self.weekly_widget.setVisible(False)
         main_layout.addWidget(self.weekly_widget)
@@ -190,7 +281,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
         self.yearly_widget.setVisible(False)
         main_layout.addWidget(self.yearly_widget)
 
-        # Проверка количества дней в месяце для yearly_day_input
+        # Check number of days in month for yearly_day_input
         self.yearly_month_input.currentIndexChanged.connect(self.update_yearly_day_range)
         self.update_yearly_day_range()
 
@@ -233,14 +324,51 @@ class AddNotifyDialog(QtWidgets.QDialog):
 
         self.setLayout(main_layout)
 
-    def on_text_input_click(self, event):
-        """Обработчик клика по полю ввода текста для показа подсказок"""
-        QtWidgets.QLineEdit.mousePressEvent(self.text_input, event)
+    def on_text_input_click(self, a0):
+        """Handler for clicking on the text input field to show suggestions"""
+        QtWidgets.QLineEdit.mousePressEvent(self.text_input, a0)
         if not self.text_input.text().strip():
             completer = self.text_input.completer()
             if completer:
                 completer.setCompletionPrefix("")
                 completer.complete()
+
+    def update_suggestions(self):
+        """Update autocomplete suggestions based on current text and backlog"""
+        current_text = self.text_input.text().strip()
+        
+        # Get suggestions from backlog
+        suggestions = []
+        if self.backlog:
+            # If user is typing, filter by prefix; otherwise show last 5
+            if current_text:
+                # Filter backlog items that start with current text (case-insensitive)
+                for item in self.backlog:
+                    text = item.get("text", "")
+                    if text and text.lower().startswith(current_text.lower()):
+                        suggestions.append(text)
+            else:
+                # Show last 5 items from backlog
+                backlog_texts = [item.get("text", "") for item in self.backlog if item.get("text")]
+                suggestions = backlog_texts[-5:] if len(backlog_texts) > 5 else backlog_texts
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_suggestions = []
+        for suggestion in suggestions:
+            if suggestion.lower() not in seen:
+                seen.add(suggestion.lower())
+                unique_suggestions.append(suggestion)
+        
+        # Create and configure completer
+        if unique_suggestions:
+            completer = QtWidgets.QCompleter(unique_suggestions, self)
+            completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+            completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
+            completer.setMaxVisibleItems(5)  # Show max 5 suggestions
+            self.text_input.setCompleter(completer)
+        else:
+            self.text_input.setCompleter(None)
 
     def update_recurrence(self, rec_type):
         if self.updating:
@@ -258,7 +386,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
             self.updating = False
 
     def update_yearly_day_range(self):
-        """Обновляет диапазон дней для yearly_day_input в зависимости от выбранного месяца"""
+        """Update the range of days for yearly_day_input depending on the selected month"""
         month = self.yearly_month_input.currentIndex() + 1
         max_days = calendar.monthrange(2024, month)[1] if month != 2 else 29  # Всегда 29 для февраля
         self.yearly_day_input.setRange(1, max_days)
@@ -330,3 +458,13 @@ class AddNotifyDialog(QtWidgets.QDialog):
     def closeEvent(self, event):
         self.save_position()
         super().closeEvent(event)
+
+    def reload_backlog(self):
+        """Reload backlog data from file to ensure we have the latest suggestions"""
+        try:
+            backlog_path = self.config_static["paths"]["backlog_path"]
+            self.backlog = load_json(backlog_path, [])
+            # Update suggestions after reloading
+            self.update_suggestions()
+        except Exception as e:
+            print(f"Error reloading backlog: {e}")

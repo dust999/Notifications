@@ -127,10 +127,37 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
 
                 self.reminders.append(reminder)
                 save_json(self.config_static["paths"]["notify_path"], self.reminders)
+                
+                # Add to backlog when creating new notification (not when editing)
+                if not reminder_data:
+                    self.add_to_backlog(reminder["text"])
+                
                 if self.notify_list_dialog and self.notify_list_dialog.isVisible():
                     self.notify_list_dialog.update_reminders(self.reminders)
                 else:
                     self.show_reminder_list()
+
+    def add_to_backlog(self, text):
+        """Add text to backlog if it doesn't already exist (case-insensitive)"""
+        if not text.strip():
+            return
+            
+        # Check if text already exists (case-insensitive)
+        existing_texts = [item.get("text", "").lower() for item in self.backlog]
+        if text.lower() not in existing_texts:
+            self.backlog.append({"text": text})
+            save_json(self.config_static["paths"]["backlog_path"], self.backlog)
+
+    def get_backlog_suggestions(self, prefix="", limit=5):
+        """Get suggestions from backlog, optionally filtered by prefix"""
+        suggestions = []
+        for item in self.backlog:
+            text = item.get("text", "")
+            if text and (not prefix or text.lower().startswith(prefix.lower())):
+                suggestions.append(text)
+        
+        # Return the most recent items first, limited by count
+        return suggestions[-limit:] if limit else suggestions
 
     def edit_reminder(self, reminder):
         self.show_add_reminder_dialog(reminder)
@@ -165,9 +192,7 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
             return
 
         reminder_text = reminder["text"]
-        if reminder_text not in [b["text"] for b in self.backlog]:
-            self.backlog.append({"text": reminder_text})
-            save_json(self.config_static["paths"]["backlog_path"], self.backlog)
+        self.add_to_backlog(reminder_text)
 
         self.reminders = [r for r in self.reminders if r.get("id") != reminder["id"]]
         save_json(self.config_static["paths"]["notify_path"], self.reminders)

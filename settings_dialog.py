@@ -127,6 +127,11 @@ class SettingsDialog(QtWidgets.QDialog):
         # Spacing before buttons
         layout.addSpacing(12)
 
+        # Clear Backlog button
+        clear_backlog_btn = QtWidgets.QPushButton("Clear Backlog")
+        clear_backlog_btn.clicked.connect(self.clear_backlog)
+        layout.addWidget(clear_backlog_btn)
+
         # Buttons
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok |
@@ -200,8 +205,8 @@ class SettingsDialog(QtWidgets.QDialog):
             # Show error message
             QtWidgets.QMessageBox.warning(
                 self,
-                "Ошибка",
-                "Не удалось изменить настройки автозапуска. Проверьте ваши права доступа."
+                "Error",
+                "Failed to change autostart settings. Please check your access rights."
             )
 
     def get_config_data(self):
@@ -244,3 +249,16 @@ class SettingsDialog(QtWidgets.QDialog):
     def closeEvent(self, event):
         self.save_position()
         super().closeEvent(event)
+
+    def clear_backlog(self):
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Clear Backlog",
+            "Are you sure you want to clear all backlog suggestions? This cannot be undone.",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            import json
+            with open(self.config_static["paths"]["backlog_path"], "w", encoding="utf-8") as f:
+                json.dump([], f, indent=4, ensure_ascii=False)
+            QtWidgets.QMessageBox.information(self, "Backlog Cleared", "Backlog has been cleared.")
