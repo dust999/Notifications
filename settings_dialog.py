@@ -162,11 +162,8 @@ class SettingsDialog(QtWidgets.QDialog):
             key = r"Software\Microsoft\Windows\CurrentVersion\Run"
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as reg:
                 winreg.SetValueEx(reg, "NotifyApp", 0, winreg.REG_SZ, full_path)
-            with open("autostart_log.txt", "a") as log:
-                log.write(f"[{datetime.datetime.now()}] Enabled autostart for NotifyApp: {full_path}\n")
         except Exception as e:
-            with open("autostart_log.txt", "a") as log:
-                log.write(f"[{datetime.datetime.now()}] Error enabling autostart for NotifyApp: {e}\n")
+            pass
 
     def disable_autostart(self):
         """Disable autostart in Windows registry"""
@@ -174,11 +171,8 @@ class SettingsDialog(QtWidgets.QDialog):
             key = r"Software\Microsoft\Windows\CurrentVersion\Run"
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as reg:
                 winreg.DeleteValue(reg, "NotifyApp")
-            with open("autostart_log.txt", "a") as log:
-                log.write(f"[{datetime.datetime.now()}] Disabled autostart for NotifyApp\n")
         except Exception as e:
-            with open("autostart_log.txt", "a") as log:
-                log.write(f"[{datetime.datetime.now()}] Error disabling autostart for NotifyApp: {e}\n")
+            pass
 
     def toggle_auto_run(self, state):
         """Toggle auto-start functionality"""

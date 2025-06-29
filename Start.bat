@@ -1,3 +1,4 @@
 @echo off
-start app.pyw
+cd /d "%~dp0"
+start pythonw "%~dp0app.pyw"
 exit 0

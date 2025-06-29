@@ -9,10 +9,10 @@
     },
     "notify_list_dialog": {
         "window_pos": {
-            "x": 942,
-            "y": 502,
+            "x": 954,
+            "y": 616,
             "width": 508,
-            "height": 374
+            "height": 247
         }
     },
     "settings_dialog": {
@@ -22,7 +22,7 @@
             "width": 266,
             "height": 238
         },
-        "autostart": false,
+        "autostart": true,
         "reminder_check_interval_sec": 10
     }
 }

@@ -197,11 +197,6 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.reminders = [r for r in self.reminders if r.get("id") != reminder["id"]]
         save_json(self.config_static["paths"]["notify_path"], self.reminders)
 
-        QtWidgets.QMessageBox.information(
-            self.main_window,
-            self.config_static["notify_list_dialog"]["reminder_done_title"],
-            self.config_static["notify_list_dialog"]["reminder_done_message"].format(reminder=reminder["text"])
-        )
         if self.notify_list_dialog and self.notify_list_dialog.isVisible():
             self.notify_list_dialog.update_reminders(self.reminders)
         else:
