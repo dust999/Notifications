@@ -1,28 +1,28 @@
 {
     "add_notify_dialog": {
         "window_pos": {
-            "x": 611,
-            "y": 287,
+            "x": 639,
+            "y": 399,
             "width": 460,
-            "height": 428
+            "height": 381
         }
     },
     "notify_list_dialog": {
         "window_pos": {
-            "x": 561,
-            "y": 372,
-            "width": 609,
-            "height": 408
+            "x": 942,
+            "y": 502,
+            "width": 508,
+            "height": 374
         }
     },
     "settings_dialog": {
         "window_pos": {
-            "x": 766,
-            "y": 516,
-            "width": 445,
-            "height": 97
+            "x": 711,
+            "y": 351,
+            "width": 266,
+            "height": 238
         },
-        "autostart": true,
-        "reminder_check_interval_sec": 15
+        "autostart": false,
+        "reminder_check_interval_sec": 10
     }
 }
