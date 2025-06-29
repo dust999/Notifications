@@ -39,10 +39,6 @@ class NotifyListDialog(QtWidgets.QDialog):
     def update_reminders(self, reminders):
         self.reminders = reminders
         self.completed_today = self.config_dynamic.get("completed_today", [])
-        while self.notify_layout.count():
-            item = self.notify_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
         self.setup_ui()
         self.show()
 
@@ -69,14 +65,80 @@ class NotifyListDialog(QtWidgets.QDialog):
             return "One-time"
 
     def setup_ui(self):
+        # Clear existing layout
         if self.layout() is not None:
             old_layout = self.layout()
             if old_layout is not None:
                 QtWidgets.QWidget().setLayout(old_layout)
+
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setSpacing(8)
         main_layout.setContentsMargins(12, 12, 12, 12)
 
+        # Check if we have any reminders
+        if not self.reminders:
+            self.setup_empty_state(main_layout)
+        else:
+            self.setup_reminders_list(main_layout)
+
+    def setup_empty_state(self, main_layout):
+        """Setup UI when there are no reminders"""
+        # Create a central widget for the empty state
+        empty_widget = QtWidgets.QWidget()
+        empty_layout = QtWidgets.QVBoxLayout(empty_widget)
+        empty_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        # Empty state icon
+        icon_label = QtWidgets.QLabel()
+        icon_label.setText("📝")
+        icon_label.setStyleSheet("font-size: 48px; color: #666666;")
+        icon_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(icon_label)
+
+        # Empty state text
+        text_label = QtWidgets.QLabel("No reminders yet")
+        text_label.setStyleSheet("font-size: 16px; color: #888888; margin: 10px 0;")
+        text_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(text_label)
+
+        # Big Add Reminder button
+        big_add_btn = QtWidgets.QPushButton("Add Your First Reminder")
+        icon_path = self.config_static["paths"].get("add_notify_window_icon")
+        if icon_path and os.path.exists(icon_path):
+            big_add_btn.setIcon(QtGui.QIcon(icon_path))
+        big_add_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #0d7377; 
+                border: 1px solid #1a8c99; 
+                font-weight: 600; 
+                font-size: 14px;
+                padding: 12px 24px;
+                border-radius: 8px;
+                min-width: 200px;
+            } 
+            QPushButton:hover { 
+                background-color: #1a8c99; 
+            } 
+            QPushButton:pressed { 
+                background-color: #0a5d61; 
+            }
+        """)
+        big_add_btn.clicked.connect(self.add_new_reminder)
+        empty_layout.addWidget(big_add_btn)
+
+        main_layout.addWidget(empty_widget)
+
+        # Close button at bottom
+        bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.addStretch()
+        close_btn = QtWidgets.QPushButton("Close")
+        close_btn.setStyleSheet("QPushButton { background-color: #3e3e3e; border: 1px solid #444444; min-width: 80px; } QPushButton:hover { background-color: #4e4e4e; }")
+        close_btn.clicked.connect(self.reject)
+        bottom_layout.addWidget(close_btn)
+        main_layout.addLayout(bottom_layout)
+
+    def setup_reminders_list(self, main_layout):
+        """Setup UI when there are reminders"""
         scroll_area = QtWidgets.QScrollArea()
         scroll_widget = QtWidgets.QWidget()
         self.notify_layout = QtWidgets.QVBoxLayout(scroll_widget)
@@ -130,10 +192,18 @@ class NotifyListDialog(QtWidgets.QDialog):
                 bg_color = "#3e2e2e"
 
             reminder_widget.setStyleSheet(f"""
-                QWidget {{ background-color: {bg_color}; border-radius: 6px; margin: 1px; }}
-                QWidget:hover {{ background-color: {bg_color.replace('#', '#')} if not is_completed else bg_color; }}
+                QWidget {{ 
+                    background-color: {bg_color}; 
+                    border-radius: 6px; 
+                    margin: 1px; 
+                    max-height: 60px;
+                }}
+                QWidget:hover {{ 
+                    background-color: {'#3e3e3e' if bg_color == '#2e2e2e' else '#2e2e2e'}; 
+                }}
             """)
 
+            # Icon
             icon_label = QtWidgets.QLabel()
             if reminder.get("icon") and os.path.exists(reminder["icon"]):
                 pixmap = QtGui.QPixmap(reminder["icon"]).scaled(20, 20, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
@@ -144,6 +214,7 @@ class NotifyListDialog(QtWidgets.QDialog):
             icon_label.setFixedSize(24, 24)
             hbox.addWidget(icon_label)
 
+            # Recurrence indicator
             recurrence_label = QtWidgets.QLabel()
             if recurrence_type != "once":
                 if self.config_static["paths"].get("recurring_icon") and os.path.exists(self.config_static["paths"]["recurring_icon"]):
@@ -155,9 +226,11 @@ class NotifyListDialog(QtWidgets.QDialog):
             recurrence_label.setFixedSize(18, 18)
             hbox.addWidget(recurrence_label)
 
-            content_layout = QtWidgets.QVBoxLayout()
-            content_layout.setSpacing(0)
+            # Content - make it more compact
+            content_layout = QtWidgets.QHBoxLayout()
+            content_layout.setSpacing(8)
 
+            # Title
             title_label = QtWidgets.QLabel(reminder["text"])
             title_label.setStyleSheet("QLabel { font-size: 12px; font-weight: 600; color: #ffffff; }")
             if is_completed:
@@ -165,6 +238,7 @@ class NotifyListDialog(QtWidgets.QDialog):
             elif is_overdue:
                 title_label.setStyleSheet("QLabel { font-size: 12px; font-weight: 600; color: #aa5555; }")
 
+            # Time and recurrence info
             info_parts = [time_str]
             if recurrence_type != "once":
                 info_parts.append(self.get_recurrence_text(reminder))
@@ -178,9 +252,10 @@ class NotifyListDialog(QtWidgets.QDialog):
 
             content_layout.addWidget(title_label)
             content_layout.addWidget(info_label)
+            content_layout.addStretch()
             hbox.addLayout(content_layout)
-            hbox.addStretch()
 
+            # Action buttons
             button_layout = QtWidgets.QHBoxLayout()
             button_layout.setSpacing(6)
 
@@ -209,15 +284,18 @@ class NotifyListDialog(QtWidgets.QDialog):
             hbox.addLayout(button_layout)
             self.notify_layout.addWidget(reminder_widget)
 
+        # Add stretch to prevent items from stretching when there's only one
+        self.notify_layout.addStretch()
+
         scroll_area.setWidget(scroll_widget)
         scroll_area.setWidgetResizable(True)
         scroll_area.setMinimumHeight(300)
         main_layout.addWidget(scroll_area)
 
-        # Кнопки внизу в одной строке
+        # Bottom buttons
         bottom_layout = QtWidgets.QHBoxLayout()
 
-        # Кнопка Add Reminder слева
+        # Add Reminder button
         self.add_reminder_btn = QtWidgets.QPushButton()
         icon_path = self.config_static["paths"].get("add_notify_window_icon")
         if icon_path and os.path.exists(icon_path):
@@ -227,10 +305,9 @@ class NotifyListDialog(QtWidgets.QDialog):
         self.add_reminder_btn.clicked.connect(self.add_new_reminder)
         bottom_layout.addWidget(self.add_reminder_btn)
 
-        # Растягивающееся пространство между кнопками
         bottom_layout.addStretch()
 
-        # Кнопка Close справа
+        # Close button
         close_btn = QtWidgets.QPushButton()
         close_btn.setText(self.tl_config.get("close_button", "Close"))
         close_btn.setStyleSheet("QPushButton { background-color: #3e3e3e; border: 1px solid #444444; min-width: 80px; } QPushButton:hover { background-color: #4e4e4e; }")
@@ -247,18 +324,8 @@ class NotifyListDialog(QtWidgets.QDialog):
 
     def mark_reminder_done(self, reminder):
         self.mark_reminder_done_callback(reminder)
-        for i in range(self.notify_layout.count()):
-            widget = self.notify_layout.itemAt(i).widget()
-            if widget:
-                layout = widget.layout()
-                if layout and layout.itemAt(2):
-                    content_layout = layout.itemAt(2)
-                    if content_layout and content_layout.itemAt(0):
-                        title_widget = content_layout.itemAt(0).widget()
-                        if title_widget and isinstance(title_widget, QtWidgets.QLabel):
-                            if title_widget.text() == reminder["text"]:
-                                widget.setParent(None)
-                                break
+        # Refresh the UI after marking as done
+        self.setup_ui()
 
     def restore_position(self):
         pos = self.config_dynamic["notify_list_dialog"].get("window_pos")
