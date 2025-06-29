@@ -34,17 +34,91 @@ class AddNotifyDialog(QtWidgets.QDialog):
         form_layout = QtWidgets.QFormLayout()
         form_layout.setSpacing(6)
 
+        # Настройка поля ввода текста с улучшенным автокомплитом
         self.text_input = QtWidgets.QLineEdit()
-        suggestions = list(set(t["text"] for t in self.backlog if "text" in t))
+
+        # Собираем все уникальные тексты из backlog и текущих напоминаний
+        suggestions = []
+
+        # Добавляем из backlog
+        if self.backlog:
+            suggestions.extend([item.get("text", "") for item in self.backlog if item.get("text")])
+
+        # Добавляем из текущих напоминаний (если они переданы через parent)
+        if hasattr(self.parent(), 'reminders') and self.parent().reminders:
+            suggestions.extend([reminder.get("text", "") for reminder in self.parent().reminders if reminder.get("text")])
+
+        # Убираем дубликаты и пустые строки
+        suggestions = list(set(filter(None, suggestions)))
+
         if suggestions:
             completer = QtWidgets.QCompleter(suggestions, self)
             completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+            completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
+            completer.setMaxVisibleItems(10)  # Показываем максимум 10 подсказок
             self.text_input.setCompleter(completer)
 
+            # Показываем подсказки при клике на пустое поле
+            self.text_input.mousePressEvent = self.on_text_input_click
+
         now = datetime.datetime.now() + datetime.timedelta(minutes=5)
+
+        # Настройка поля времени с большими стрелками
         self.time_input = QtWidgets.QTimeEdit()
         self.time_input.setDisplayFormat("HH:mm")
         self.time_input.setTime(QtCore.QTime(now.hour, now.minute))
+
+        # Увеличиваем размер стрелок через стили
+        self.time_input.setStyleSheet("""
+            QTimeEdit {
+                padding-right: 25px;
+                min-height: 25px;
+            }
+            QTimeEdit::up-button {
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 20px;
+                height: 12px;
+                border-left: 1px solid #444444;
+                border-bottom: 1px solid #444444;
+                background-color: #2e2e2e;
+            }
+            QTimeEdit::up-button:hover {
+                background-color: #3e3e3e;
+            }
+            QTimeEdit::up-button:pressed {
+                background-color: #1e1e1e;
+            }
+            QTimeEdit::down-button {
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 20px;
+                height: 12px;
+                border-left: 1px solid #444444;
+                border-top: 1px solid #444444;
+                background-color: #2e2e2e;
+            }
+            QTimeEdit::down-button:hover {
+                background-color: #3e3e3e;
+            }
+            QTimeEdit::down-button:pressed {
+                background-color: #1e1e1e;
+            }
+            QTimeEdit::up-arrow {
+                image: none;
+                border: 4px solid transparent;
+                border-bottom: 6px solid #ffffff;
+                width: 0px;
+                height: 0px;
+            }
+            QTimeEdit::down-arrow {
+                image: none;
+                border: 4px solid transparent;
+                border-top: 6px solid #ffffff;
+                width: 0px;
+                height: 0px;
+            }
+        """)
 
         self.icon_combo = QtWidgets.QComboBox()
         self.icon_combo.addItem(self.at_config["no_icon_text"], "")
@@ -161,6 +235,18 @@ class AddNotifyDialog(QtWidgets.QDialog):
         main_layout.addWidget(buttons)
 
         self.setLayout(main_layout)
+
+    def on_text_input_click(self, event):
+        """Обработчик клика по полю ввода текста для показа подсказок"""
+        # Вызываем оригинальный обработчик
+        QtWidgets.QLineEdit.mousePressEvent(self.text_input, event)
+
+        # Если поле пустое, показываем все доступные подсказки
+        if not self.text_input.text().strip():
+            completer = self.text_input.completer()
+            if completer:
+                completer.setCompletionPrefix("")
+                completer.complete()
 
     def update_recurrence(self, rec_type):
         if self.updating:
