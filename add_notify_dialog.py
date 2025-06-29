@@ -1,3 +1,4 @@
+import os
 from PyQt6 import QtWidgets, QtGui, QtCore
 import uuid
 from utils import save_json
@@ -68,56 +69,40 @@ class AddNotifyDialog(QtWidgets.QDialog):
         self.time_input.setDisplayFormat("HH:mm")
         self.time_input.setTime(QtCore.QTime(now.hour, now.minute))
 
+        icons_path = os.path.abspath("icons")
+        arrow_up_path = os.path.join(icons_path, "arrow-up-white.svg").replace("\\", "/")
+        arrow_down_path = os.path.join(icons_path, "arrow-down-white.svg").replace("\\", "/")
+
         # Увеличиваем размер стрелок через стили
-        self.time_input.setStyleSheet("""
-            QTimeEdit {
-                padding-right: 25px;
+        self.time_input.setStyleSheet(f"""
+            QTimeEdit {{
+                padding-right: 30px;
                 min-height: 25px;
-            }
-            QTimeEdit::up-button {
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 20px;
-                height: 12px;
-                border-left: 1px solid #444444;
-                border-bottom: 1px solid #444444;
+                font-size: 16px;
+                color: #ffffff;
                 background-color: #2e2e2e;
-            }
-            QTimeEdit::up-button:hover {
-                background-color: #3e3e3e;
-            }
-            QTimeEdit::up-button:pressed {
-                background-color: #1e1e1e;
-            }
-            QTimeEdit::down-button {
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 20px;
-                height: 12px;
-                border-left: 1px solid #444444;
-                border-top: 1px solid #444444;
-                background-color: #2e2e2e;
-            }
-            QTimeEdit::down-button:hover {
-                background-color: #3e3e3e;
-            }
-            QTimeEdit::down-button:pressed {
-                background-color: #1e1e1e;
-            }
-            QTimeEdit::up-arrow {
-                image: none;
-                border: 4px solid transparent;
-                border-bottom: 6px solid #ffffff;
-                width: 0px;
-                height: 0px;
-            }
-            QTimeEdit::down-arrow {
-                image: none;
-                border: 4px solid transparent;
-                border-top: 6px solid #ffffff;
-                width: 0px;
-                height: 0px;
-            }
+                border: 1px solid #444444;
+                border-radius: 4px;
+            }}
+            QTimeEdit::up-button, QTimeEdit::down-button {{
+                width: 24px;
+                height: 18px;
+                border: none;
+                background: transparent;
+            }}
+            QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {{
+                background-color: #444444;
+            }}
+            QTimeEdit::up-arrow {{
+                width: 16px;
+                height: 16px;
+                image: url("{arrow_up_path}");
+            }}
+            QTimeEdit::down-arrow {{
+                width: 16px;
+                height: 16px;
+                image: url("{arrow_down_path}");
+            }}
         """)
 
         self.icon_combo = QtWidgets.QComboBox()
@@ -204,6 +189,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
                 self.time_input.setTime(QtCore.QTime(int(time_parts[0]), int(time_parts[1])))
             recurrence_type = self.reminder_data.get("recurrence_type")
             normalized_rec_type = next((rt for rt in self.at_config["recurrence_types"] if rt.lower() == recurrence_type.lower()), "Daily")
+            #self.recurrence_buttons[normalized_rec_type].setChecked(True)
             self.recurrence_buttons[normalized_rec_type].setChecked(True)
             self.update_recurrence(normalized_rec_type)
             if normalized_rec_type == "One-time" and self.reminder_data.get("date"):
