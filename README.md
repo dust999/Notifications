@@ -15,7 +15,11 @@ Requirements:
 
 🔧 Quick Start
 ---
-Install dependencies
+#1 First instal Python in system add it to PATH.
+
+#2 Dowload repository. Clone it or download packed archive.
+
+#3 Then Install dependencies
 Run the installer script:
 ````
 install.bat
@@ -24,7 +28,7 @@ This will automatically install all required Python packages via pip.
 
 Run the app
 ---
-Start the app using:
+#4 Start the app using:
 ````
 start.bat
 ````
