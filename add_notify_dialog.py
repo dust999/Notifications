@@ -6,11 +6,12 @@ import datetime
 import calendar
 
 class AddNotifyDialog(QtWidgets.QDialog):
-    def __init__(self, backlog, config_static, config_dynamic, parent=None, reminder_data=None):
+    def __init__(self, backlog, config_static, config_dynamic, parent=None, reminder_data=None, data_manager=None):
         super().__init__(parent)
         self.backlog = backlog
         self.config_static = config_static
         self.config_dynamic = config_dynamic
+        self.data_manager = data_manager
         self.reminder_data = reminder_data
         self.at_config = config_static["add_notify_dialog"]
         self.updating = False
@@ -388,7 +389,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
     def update_yearly_day_range(self):
         """Update the range of days for yearly_day_input depending on the selected month"""
         month = self.yearly_month_input.currentIndex() + 1
-        max_days = calendar.monthrange(2024, month)[1] if month != 2 else 29  # Всегда 29 для февраля
+        max_days = calendar.monthrange(2024, month)[1] if month != 2 else 29  # Always 29 for February
         self.yearly_day_input.setRange(1, max_days)
         if self.yearly_day_input.value() > max_days:
             self.yearly_day_input.setValue(max_days)
@@ -412,12 +413,12 @@ class AddNotifyDialog(QtWidgets.QDialog):
                     data["weekly_days"] = [idx for idx, btn in self.day_buttons.items() if btn.isChecked()]
                     data["recurring"] = True
                 elif rec_type == "Monthly":
-                    max_days = calendar.monthrange(now.year, now.month)[1] if now.month != 2 else 29  # Всегда 29 для февраля
+                    max_days = calendar.monthrange(now.year, now.month)[1] if now.month != 2 else 29  # Always 29 for February
                     data["monthly_day"] = min(self.monthly_day_input.value(), max_days)
                     data["recurring"] = True
                 elif rec_type == "Yearly":
                     data["yearly_month"] = self.yearly_month_input.currentIndex() + 1
-                    max_days = calendar.monthrange(now.year, data["yearly_month"])[1] if data["yearly_month"] != 2 else 29  # Всегда 29 для февраля
+                    max_days = calendar.monthrange(now.year, data["yearly_month"])[1] if data["yearly_month"] != 2 else 29  # Always 29 for February
                     data["yearly_day"] = min(self.yearly_day_input.value(), max_days)
                     data["recurring"] = True
                 else:
@@ -460,10 +461,15 @@ class AddNotifyDialog(QtWidgets.QDialog):
         super().closeEvent(event)
 
     def reload_backlog(self):
-        """Reload backlog data from file to ensure we have the latest suggestions"""
+        """Reload backlog data to ensure we have the latest suggestions"""
         try:
-            backlog_path = self.config_static["paths"]["backlog_path"]
-            self.backlog = load_json(backlog_path, [])
+            if self.data_manager:
+                # Use data_manager to get up-to-date data
+                self.backlog = self.data_manager.get_backlog()
+            else:
+                # Fallback to direct file reading
+                backlog_path = self.config_static["paths"]["backlog_path"]
+                self.backlog = load_json(backlog_path, [])
             # Update suggestions after reloading
             self.update_suggestions()
         except Exception as e:
