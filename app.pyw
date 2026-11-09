@@ -158,12 +158,25 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
     def _validate_reminder(self, reminder):
         return "id" in reminder and "text" in reminder
 
-    def open_editor(self, reminder_data=None, initial=None, parent=None):
-        """`initial`: datetime for a new reminder; `parent`: the window it opens over (the list by default)."""
+    def open_editor(self, reminder_data=None, initial=None, parent=None, modal=True):
+        """`initial`: datetime for a new reminder; `parent`: the window it opens over (the list by default).
+        modal=False (the calendar): returns at once with the open dialog, which saves when accepted;
+        the calendar closes it when clicked elsewhere."""
         suggestions = [b.get("text", "") for b in self.data_manager.get_backlog() if b.get("text")]
         dialog = ReminderEditor(reminder_data, suggestions, parent or self.flyout, initial)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
-            return
+        if not modal:
+            dialog.setModal(False)
+            dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.accepted.connect(lambda: self._save_from_editor(dialog, reminder_data))
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            return dialog
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self._save_from_editor(dialog, reminder_data)
+        return None
+
+    def _save_from_editor(self, dialog, reminder_data):
         reminder = dialog.get_data()
         if not (reminder["text"] and self._validate_reminder(reminder)):
             return

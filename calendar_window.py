@@ -6,12 +6,13 @@ Layout follows design/calendar.html (approved mockup) and design/CALENDAR-NOTES.
 """
 import calendar
 import datetime
+import time
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 import schedule
 import theme
-from widgets import IconButton, Segmented, label
+from widgets import IconButton, Segmented, label, paint_surface
 
 MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
                "August", "September", "October", "November", "December"]
@@ -85,6 +86,7 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
     open_view = QtCore.pyqtSignal(str, object)   # view, date
     create = QtCore.pyqtSignal(object)           # datetime for a new reminder
     edit = QtCore.pyqtSignal(dict)               # reminder to edit
+    show_day = QtCore.pyqtSignal(object, QtCore.QRect)  # date, its cell on screen: open the day's card
 
     def __init__(self, get_reminders, parent=None):
         super().__init__(parent)
@@ -100,6 +102,7 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
         self._hover = None   # hovered date (month, year) or snapped minutes (day)
         self._cache = {}
         self._today = datetime.date.today()
+        self._ignore_until = 0.0  # see ignore_click
         # The current-time line and "today" move slowly: a check every 30 s is plenty
         self.ticker = QtCore.QTimer(self)
         self.ticker.timeout.connect(self._tick)
@@ -201,7 +204,7 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
             d = start + datetime.timedelta(days=idx)
             row, col = divmod(idx, 7)
             cell = QtCore.QRectF(col * col_w, head + row * row_h, col_w, row_h)
-            if d == self._hover:
+            if d == self._hover or (d, "more") == self._hover:
                 p.fillRect(cell, _col("hover"))
             # Date number; today in an accent circle
             num = QtCore.QRectF(cell.x() + px(6), cell.y() + px(5), px(26), px(26))
@@ -226,9 +229,14 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
                 self._month_item(p, QtCore.QRectF(cell.x() + px(4), top + i * line_h, col_w - px(8), line_h - px(2)),
                                  occ, r, d < self._today)
             if len(shown) < len(items):
-                more = QtCore.QRectF(cell.x() + px(8), top + len(shown) * line_h, col_w - px(12), line_h - px(2))
-                self._text(p, more, f"+{len(items) - len(shown)} more", 12, 600, "text2")
-                self._hits.append((more, "day", d))
+                text = f"+{len(items) - len(shown)} more"
+                text_w = QtGui.QFontMetrics(theme.font(12, 600)).horizontalAdvance(text)
+                more = QtCore.QRectF(cell.x() + px(4), top + len(shown) * line_h, text_w + px(16), line_h - px(2))
+                p.setPen(QtCore.Qt.PenStyle.NoPen)
+                p.setBrush(_col("accent", 0.22 if (d, "more") == self._hover else 0.12))
+                p.drawRoundedRect(more, px(4), px(4))
+                self._text(p, more, text, 12, 600, "accent", QtCore.Qt.AlignmentFlag.AlignCenter, False)
+                self._hits.append((more, "more", (d, cell)))
             self._hits.append((cell, "new", datetime.datetime.combine(d, NEW_AT)))
             if d.month != first.month:
                 p.fillRect(cell, _darken_overlay())
@@ -441,7 +449,14 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
             hover = self._minutes_at(pos.y()) if kind is None and pos.x() >= self._gutter() else None
         elif self.view == "month":
             hover = payload.date() if kind == "new" else payload if kind == "day" else (
-                self._hover if kind == "edit" else None)
+                (payload[0], "more") if kind == "more" else self._hover if kind == "edit" else None)
+            # Titles in the cells get cut short: the full one on hover
+            if kind == "edit":
+                QtWidgets.QToolTip.showText(event.globalPosition().toPoint(),
+                                            payload.get("text", "") + "\n" + schedule.describe_rule(payload),
+                                            self.viewport())
+            else:
+                QtWidgets.QToolTip.hideText()
         else:
             hover = payload if kind == "day" else None
             tip = self._year_tooltip(hover) if hover else ""
@@ -468,21 +483,190 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
         if self.view == "day":
             self._hover = None  # the ghost would sit at a stale time until the mouse moves
 
+    def ignore_click(self):
+        """A popup over the calendar just closed: the click that closed it must not also act here
+        (e.g. open "New reminder" on the day under the mouse). A real second click still works."""
+        self._ignore_until = time.monotonic() + 0.25
+
     def mousePressEvent(self, event):
-        if event.button() != QtCore.Qt.MouseButton.LeftButton:
+        if event.button() != QtCore.Qt.MouseButton.LeftButton or time.monotonic() < self._ignore_until:
             return
         pos = event.position()
         kind, payload = self._hit_at(pos)
         QtWidgets.QToolTip.hideText()
+        # Windows (editor, day card) open once this click is over, not in the middle of it,
+        # so the press and release both land here before a new window takes the focus.
+        later = lambda fn: QtCore.QTimer.singleShot(0, fn)
         if kind == "edit":
-            self.edit.emit(payload)
+            later(lambda: self.edit.emit(payload))
         elif kind == "new":
-            self.create.emit(payload)
+            later(lambda: self.create.emit(payload))
         elif kind in ("day", "month"):
             self.open_view.emit(kind, payload)
+        elif kind == "more":
+            d, cell = payload
+            rect = QtCore.QRect(self.viewport().mapToGlobal(cell.topLeft().toPoint()), cell.size().toSize())
+            later(lambda: self.show_day.emit(d, rect))
         elif self.view == "day" and pos.x() >= self._gutter():
             m = self._minutes_at(pos.y())
-            self.create.emit(datetime.datetime.combine(self.date, datetime.time(m // 60, m % 60)))
+            when = datetime.datetime.combine(self.date, datetime.time(m // 60, m % 60))
+            later(lambda: self.create.emit(when))
+
+
+class _DayRows(QtWidgets.QWidget):
+    """Painted rows for DayCard: color mark, time, full title and the repeat rule under it."""
+    clicked = QtCore.pyqtSignal(dict)
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self.items = items   # [(datetime, reminder)]
+        self.hover = None
+        self.row_h = theme.px(48)
+        self.setMouseTracking(True)
+        self.setFixedHeight(self.row_h * len(items))
+
+    def paintEvent(self, event):
+        px = theme.px
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        now = datetime.datetime.now()
+        for i, (occ, r) in enumerate(self.items):
+            rect = QtCore.QRectF(0, i * self.row_h, self.width(), self.row_h - px(2))
+            symbol, tint = _cat_colors(r)
+            p.save()
+            if occ < now:
+                p.setOpacity(0.6)
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(_col("hover") if i == self.hover else tint)
+            p.drawRoundedRect(rect, px(6), px(6))
+            p.setBrush(symbol)
+            p.drawRoundedRect(QtCore.QRectF(rect.x() + px(5), rect.y() + px(8), px(3), rect.height() - px(16)), 1.5, 1.5)
+            colored = theme.reminder_color(r.get("color")) is not None
+            p.setFont(theme.font(13, 600))
+            p.setPen(symbol if colored else _col("text2"))
+            time_rect = QtCore.QRectF(rect.x() + px(16), rect.y() + px(5), px(48), px(20))
+            p.drawText(time_rect, int(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter),
+                       f"{occ:%H:%M}")
+            x = time_rect.x() + px(52)
+            fm = QtGui.QFontMetrics(theme.font(13, 600))
+            p.setPen(_col("text"))
+            p.drawText(QtCore.QRectF(x, rect.y() + px(5), rect.right() - x - px(8), px(20)),
+                       int(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter),
+                       fm.elidedText(r.get("text", ""), QtCore.Qt.TextElideMode.ElideRight, int(rect.right() - x - px(8))))
+            p.setFont(theme.font(12))
+            p.setPen(_col("text2"))
+            p.drawText(QtCore.QRectF(x, rect.y() + px(24), rect.right() - x - px(8), px(18)),
+                       int(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter),
+                       schedule.describe_rule(r))
+            p.restore()
+        p.end()
+
+    def _row_at(self, pos):
+        i = int(pos.y() // self.row_h)
+        return i if 0 <= i < len(self.items) else None
+
+    def mouseMoveEvent(self, event):
+        i = self._row_at(event.position())
+        if i != self.hover:
+            self.hover = i
+            self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor if i is not None else QtCore.Qt.CursorShape.ArrowCursor)
+            self.update()
+
+    def leaveEvent(self, event):
+        self.hover = None
+        self.update()
+
+    def mousePressEvent(self, event):
+        i = self._row_at(event.position())
+        if i is not None and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.items[i][1])
+
+
+class DayCard(QtWidgets.QFrame):
+    """All reminders of one day, over its Month cell: dated ones (birthdays, bills) first,
+    then the daily and weekly ones. Click one to edit it; closes on any click outside."""
+    edit = QtCore.pyqtSignal(dict)
+    open_day = QtCore.pyqtSignal(object)
+    create = QtCore.pyqtSignal(object)
+    closed = QtCore.pyqtSignal()
+
+    def __init__(self, date, items, parent=None):
+        super().__init__(parent, QtCore.Qt.WindowType.Popup | QtCore.Qt.WindowType.FramelessWindowHint
+                         | QtCore.Qt.WindowType.NoDropShadowWindowHint)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        # A click outside only closes the popup; it isn't passed on to what's underneath
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_NoMouseReplay)
+        px = theme.px
+        self.date = date
+        self.setFixedWidth(px(340))
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(px(14), px(12), px(14), px(14))
+        root.setSpacing(px(6))
+        head = QtWidgets.QHBoxLayout()
+        head.addWidget(label(f"{DAY_NAMES[date.weekday()]}, {MONTH_NAMES[date.month - 1]} {date.day}", "row"))
+        head.addStretch()
+        close = IconButton("close", "Close", 28, 16)
+        close.clicked.connect(self.close)
+        head.addWidget(close)
+        root.addLayout(head)
+
+        body = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(body)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(px(4))
+        dated = [(o, r) for o, r in items if schedule.is_date_specific(r)]
+        repeating = [(o, r) for o, r in items if not schedule.is_date_specific(r)]
+        for title, group in (("On this date", dated), ("Repeating", repeating)):
+            if not group:
+                continue
+            lay.addWidget(label(title, "section"))
+            rows = _DayRows(group)
+            rows.clicked.connect(self._edit)
+            lay.addWidget(rows)
+            lay.addSpacing(px(4))
+        if not items:
+            lay.addWidget(label("Nothing planned", "meta"))
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(body)
+        body.adjustSize()
+        scroll.setFixedHeight(min(body.sizeHint().height(), px(420)))
+        root.addWidget(scroll)
+
+        buttons = QtWidgets.QHBoxLayout()
+        open_day = QtWidgets.QPushButton("Open day")
+        open_day.clicked.connect(lambda: (self.close(), self.open_day.emit(self.date)))
+        new = QtWidgets.QPushButton("New reminder")
+        new.setProperty("kind", "primary")
+        new.clicked.connect(lambda: (self.close(), self.create.emit(datetime.datetime.combine(self.date, NEW_AT))))
+        buttons.addWidget(open_day)
+        buttons.addStretch()
+        buttons.addWidget(new)
+        root.addSpacing(px(4))
+        root.addLayout(buttons)
+
+    def _edit(self, reminder):
+        self.edit.emit(reminder)  # the window opens the editor after this click (see _show_day_card)
+        self.close()
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
+
+    def paintEvent(self, event):
+        paint_surface(self, False, theme.px(10), "popup")
+
+    def show_at(self, cell):
+        """Over the clicked cell, like Google Calendar's day card; kept on the screen."""
+        self.adjustSize()
+        area = QtGui.QGuiApplication.screenAt(cell.center()).availableGeometry() \
+            if QtGui.QGuiApplication.screenAt(cell.center()) else QtGui.QGuiApplication.primaryScreen().availableGeometry()
+        x = min(max(cell.left() - theme.px(4), area.left() + 8), area.right() - self.width() - 8)
+        y = min(max(cell.top() - theme.px(4), area.top() + 8), area.bottom() - self.height() - 8)
+        self.move(x, y)
+        self.show()
 
 
 class CalendarWindow(QtWidgets.QWidget):
@@ -538,6 +722,7 @@ class CalendarWindow(QtWidgets.QWidget):
         self.canvas.open_view.connect(lambda view, d: self.set_view(view, d))
         self.canvas.create.connect(self._create)
         self.canvas.edit.connect(self._edit)
+        self.canvas.show_day.connect(self._show_day_card)
         root.addWidget(self.canvas, 1)
 
         for key, action in (("Left", lambda: self.step(-1)), ("Right", lambda: self.step(1)),
@@ -547,6 +732,7 @@ class CalendarWindow(QtWidgets.QWidget):
             QtGui.QShortcut(QtGui.QKeySequence(key), self, action)
 
         self.view, self.date = "month", datetime.date.today()
+        self.editor = None  # the reminder editor opened from here, while it's open
         self.restyle()
         self._sync()
         self.canvas.setFocus()
@@ -621,13 +807,52 @@ class CalendarWindow(QtWidgets.QWidget):
         if self.view == "day" and self.date != datetime.date.today():
             self._create(datetime.datetime.combine(self.date, NEW_AT))
         else:
-            self.app.open_editor(None, parent=self)
+            self._open_editor()
+
+    def _show_day_card(self, date, cell):
+        """Everything on one day in a card over its cell (from "+N more" in Month view)."""
+        items = self.canvas.occurrences(date, date).get(date, [])
+        card = DayCard(date, items, self)
+        # The card is deleted when it closes: open the editor from here, once the click is over
+        card.edit.connect(lambda r: QtCore.QTimer.singleShot(0, lambda: self._edit(r)))
+        card.open_day.connect(lambda d: self.set_view("day", d))
+        card.create.connect(lambda when: QtCore.QTimer.singleShot(0, lambda: self._create(when)))
+        card.closed.connect(self.canvas.ignore_click)
+        card.show_at(cell)
 
     def _create(self, when):
-        self.app.open_editor(None, initial=when, parent=self)
+        self._open_editor(initial=when)
 
     def _edit(self, reminder):
-        self.app.open_editor(reminder, parent=self)
+        self._open_editor(reminder)
+
+    def _open_editor(self, reminder=None, initial=None):
+        """The editor stays clickable-around: a click anywhere on the calendar closes it unsaved
+        (like Google Calendar), and that click does nothing else."""
+        if self.editor is not None:
+            self.editor.reject()
+        editor = self.app.open_editor(reminder, initial=initial, parent=self, modal=False)
+        self.editor = editor
+        editor.finished.connect(lambda _=None, e=editor: self._editor_closed(e))
+        QtWidgets.QApplication.instance().installEventFilter(self)
+
+    def _editor_closed(self, editor):
+        if self.editor is editor:
+            self.editor = None
+            QtWidgets.QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if (self.editor is not None and event.type() == QtCore.QEvent.Type.MouseButtonPress
+                and isinstance(obj, QtWidgets.QWidget) and obj.window() is self):
+            self.editor.reject()
+            self.canvas.ignore_click()
+            return True
+        return False
+
+    def closeEvent(self, event):
+        if self.editor is not None:
+            self.editor.reject()
+        super().closeEvent(event)
 
     def refresh(self):
         self.canvas.data_changed()

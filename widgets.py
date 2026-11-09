@@ -455,6 +455,8 @@ class DatePopup(QtWidgets.QFrame):
                          | QtCore.Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        # A click outside only closes the popup; it isn't passed on to what's underneath
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_NoMouseReplay)
         self.selected = date
         self.month = date.replace(day=1)
         root = QtWidgets.QVBoxLayout(self)
