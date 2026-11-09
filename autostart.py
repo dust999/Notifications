@@ -1,7 +1,10 @@
 """Start the app at Windows logon via the per-user Run registry key."""
 import os
 import sys
-import winreg
+
+if sys.platform == "win32":
+    import winreg
+# macOS later: a LaunchAgent plist in ~/Library/LaunchAgents instead of the registry
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "NotifyApp"
@@ -21,6 +24,8 @@ def _command():
 
 
 def is_enabled():
+    if sys.platform != "win32":
+        return False
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_QUERY_VALUE) as key:
             winreg.QueryValueEx(key, VALUE_NAME)
@@ -31,6 +36,8 @@ def is_enabled():
 
 def set_enabled(enabled):
     """Turn autostart on or off. Raises OSError if the registry can't be changed."""
+    if sys.platform != "win32":
+        raise OSError("Autostart is only implemented for Windows so far")
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
         if enabled:
             winreg.SetValueEx(key, VALUE_NAME, 0, winreg.REG_SZ, _command())
@@ -44,6 +51,8 @@ def set_enabled(enabled):
 def repair():
     """Run once on startup: remove legacy entries that point at this app and make
     our entry point at this copy of the app (the folder may have moved)."""
+    if sys.platform != "win32":
+        return
     try:
         legacy_found = False
         access = winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE

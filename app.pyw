@@ -5,31 +5,40 @@ from PyQt6 import QtWidgets, QtGui, QtCore
 from utils import load_json, prepare_data_files
 from data_manager import DataManager
 from fullscreen_reminder import FullscreenReminder
-from add_notify_dialog import AddNotifyDialog
-from notify_list_dialog import NotifyListDialog
 from settings_dialog import SettingsDialog
 from reminder_check import ReminderChecker
+from editor import ReminderEditor
+from flyout import RemindersFlyout
 import autostart
+import schedule
+import theme
+
+PAUSE_MINUTES = 60
+
 
 class NotifyApp(QtWidgets.QSystemTrayIcon):
     def __init__(self, app, config_static, config_dynamic, main_window):
-        super().__init__(self._get_valid_icon(config_static["paths"]["tray_icon"]))
+        super().__init__()
         self.app = app
         self.config_static = config_static
         self.config_dynamic = config_dynamic
         self.main_window = main_window
         # Fullscreen reminders currently on screen (see show_fullscreen_reminder)
         self._popups = []
+        # The flyout is created when opened and deleted when closed (saves memory)
+        self.flyout = None
+        self.paused_until = None
+        self._pause_timer = QtCore.QTimer(self)
+        self._pause_timer.setSingleShot(True)
+        self._pause_timer.timeout.connect(lambda: self.set_paused(False))
 
         # Initialize centralized data manager
         self.data_manager = DataManager(config_static)
-        
-        # Subscribe to data changes for UI updates
-        self.data_manager.subscribe('reminders', self._on_reminders_changed)
-        self.data_manager.subscribe('completed_today', self._on_completed_changed)
-        
-        self.notify_list_dialog = None
+        for kind in ("reminders", "completed"):
+            self.data_manager.subscribe(kind, self._on_data_changed)
+
         self.setup_tray_menu()
+        self._update_tray_icon()
 
         self.check_overdue_reminders()
 
@@ -38,164 +47,133 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.timer.timeout.connect(self.check_reminders)
         self.timer.start(config_dynamic["settings_dialog"]["reminder_check_interval_sec"] * 1000)
 
-        self.setToolTip(config_static["tray"]["tray_tooltip"])
+        self.setToolTip("Notify")
         self.activated.connect(self.handle_tray_click)
+        # Windows light/dark switch: recolor the tray icon (and the app when it follows the system)
+        app.styleHints().colorSchemeChanged.connect(self._system_theme_changed)
         self.show()
 
-    def _on_reminders_changed(self, reminders):
-        """Callback when reminders are changed"""
-        if self.notify_list_dialog and self.notify_list_dialog.isVisible():
-            self.notify_list_dialog.update_reminders(reminders)
+    def _system_theme_changed(self, _scheme):
+        settings = self.config_dynamic.get("settings_dialog", {})
+        if settings.get("theme", "system") == "system":
+            self.preview_appearance("system", settings.get("palette"), settings.get("text_size"))
+        else:
+            self._update_tray_icon()
 
-    def _on_completed_changed(self, completed):
-        """Callback when completed tasks are changed"""
-        # You can add logic to update the UI if needed
-        pass
+    # ---------- tray ----------
 
-    def _validate_reminder(self, reminder):
-        return "id" in reminder and "text" in reminder
+    def _update_tray_icon(self):
+        # Outline bell colored for the taskbar's own light/dark setting, so it's always visible
+        self.setIcon(theme.tray_icon(paused=bool(self.paused_until)))
+        self.setToolTip(f"Notify — paused until {self.paused_until:%H:%M}" if self.paused_until else "Notify")
+        if hasattr(self, "pause_action"):
+            self.pause_action.blockSignals(True)
+            self.pause_action.setChecked(bool(self.paused_until))
+            self.pause_action.blockSignals(False)
 
-    def _get_valid_icon(self, icon_path, default_path="icons/icon.png"):
-        if os.path.exists(icon_path):
-            return QtGui.QIcon(icon_path)
-        print(f"Warning: Icon not found at {icon_path}, using default: {default_path}")
-        return QtGui.QIcon(default_path)
+    def setup_tray_menu(self):
+        self.menu = QtWidgets.QMenu()
+        icon = lambda name: theme.icon(name, theme.c("text2"), 16)
+        self.menu.addAction(icon("open-list"), "Open reminders", self.show_reminder_list)
+        self.menu.addAction(icon("add"), "New reminder", lambda: self.open_editor(None))
+        self.pause_action = self.menu.addAction(icon("pause"), "Pause for 1 hour")
+        self.pause_action.setCheckable(True)
+        self.pause_action.toggled.connect(self.set_paused)
+        self.menu.addAction(icon("settings"), "Settings", self.show_settings_dialog)
+        self.menu.addSeparator()
+        self.menu.addAction(icon("exit"), "Exit", self.exit_app)
+        self.setContextMenu(self.menu)
 
     def handle_tray_click(self, reason):
         if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger:
             self.show_reminder_list()
 
-    def setup_tray_menu(self):
-        self.menu = QtWidgets.QMenu()
-        tray_config = self.config_static["tray"]
-
-        open_action = QtGui.QAction(
-            self._get_valid_icon(self.config_static["paths"]["notify_list_window_icon"]),
-            tray_config["open_reminders_action"],
-            self
-        )
-        open_action.triggered.connect(self.show_reminder_list)
-        self.menu.addAction(open_action)
-
-        settings_action = QtGui.QAction(
-            self._get_valid_icon(self.config_static["paths"]["settings_window_icon"]),
-            tray_config["settings_action"],
-            self
-        )
-        settings_action.triggered.connect(self.show_settings_dialog)
-        self.menu.addAction(settings_action)
-
-        self.menu.addSeparator()
-
-        exit_icon_path = self.config_static["paths"].get("exit_icon", self.config_static["paths"]["tray_icon"])
-        exit_action = QtGui.QAction(
-            self._get_valid_icon(exit_icon_path),
-            tray_config["exit_action"],
-            self
-        )
-        exit_action.triggered.connect(self.exit_app)
-        self.menu.addAction(exit_action)
-
-        self.setContextMenu(self.menu)
-
-    def check_overdue_reminders(self):
-        """Check for overdue one-time reminders on startup"""
-        now = datetime.datetime.now()
-        overdue_reminders = []
-        reminders = self.data_manager.get_reminders()
-
-        for reminder in reminders[:]:
-            if not self._validate_reminder(reminder):
-                continue
-
-            # Only check one-time reminders for overdue status
-            if reminder.get("recurrence_type") == "once":
-                time_str = reminder.get("time")
-                date_str = reminder.get("date")
-
-                if time_str and date_str:
-                    try:
-                        reminder_datetime = datetime.datetime.fromisoformat(f"{date_str}T{time_str}:00")
-                        if reminder_datetime < now:
-                            overdue_reminders.append((reminder, reminder_datetime))
-                    except ValueError:
-                        print(f"Warning: Invalid date/time for reminder {reminder['id']}, skipping.")
-
-        # Sort by overdue time (most overdue first)
-        overdue_reminders.sort(key=lambda x: x[1])
-
-        for reminder, _ in overdue_reminders:
-            self.show_fullscreen_reminder(reminder["text"], reminder.get("icon"))
-            self.mark_reminder_completed(reminder, overdue=True)
-
-    def show_reminder_list(self):
-        reminders = self.data_manager.get_reminders()
-        completed = self.data_manager.get_completed()
-        
-        if self.notify_list_dialog is None or not self.notify_list_dialog.isVisible():
-            self.notify_list_dialog = NotifyListDialog(
-                reminders, 
-                self.delete_reminder,
-                self.edit_reminder, 
-                self.config_static, 
-                self.config_dynamic, 
-                self.show_add_reminder_dialog, 
-                self.main_window,
-                self.data_manager  # Передаем data_manager
-            )
-            self.notify_list_dialog.setWindowIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
+    def show_reminder_list(self, animate=True):
+        """Toggle the flyout above the tray."""
+        if self.flyout is not None:
+            self.flyout.close()
+            return
+        flyout = RemindersFlyout(self)
+        self.flyout = flyout
+        flyout.destroyed.connect(lambda _=None, f=flyout: self._forget_flyout(f))
+        flyout.place(self.geometry())
+        if animate:
+            flyout.fade_in()
         else:
-            self.notify_list_dialog.update_reminders(reminders)
-        self.notify_list_dialog.show()
-        self.notify_list_dialog.raise_()
-        self.notify_list_dialog.activateWindow()
+            flyout.show()
+        flyout.raise_()
+        flyout.activateWindow()
 
-    def show_add_reminder_dialog(self, reminder_data=None):
-        backlog = self.data_manager.get_backlog()
-        dialog = AddNotifyDialog(backlog, self.config_static, self.config_dynamic, self.main_window, reminder_data, self.data_manager)
-        dialog.setWindowIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            reminder = dialog.get_notify_data()
-            if reminder["text"] and self._validate_reminder(reminder):
-                if reminder_data:
-                    # Update existing reminder (preserve completed entries)
-                    old_time = reminder_data.get("time")
-                    new_time = reminder.get("time")
-                    
-                    # If time changed to a later time, remove from completed_today to allow re-triggering
-                    if old_time != new_time and old_time and new_time:
-                        try:
-                            old_hour, old_minute = map(int, old_time.split(":"))
-                            new_hour, new_minute = map(int, new_time.split(":"))
-                            
-                            # Convert to minutes for easy comparison
-                            old_minutes = old_hour * 60 + old_minute
-                            new_minutes = new_hour * 60 + new_minute
-                            
-                            # Only reset if new time is later than old time
-                            if new_minutes > old_minutes:
-                                self.data_manager.remove_completed_entry(reminder_data["id"])
-                        except ValueError:
-                            # If time format is invalid, don't reset
-                            pass
-                    
-                    self.data_manager.update_reminder(reminder_data["id"], reminder)
-                else:
-                    # Add new reminder
-                    self.data_manager.add_reminder(reminder)
-                    # Add to backlog when creating new notification (not when editing)
-                    self.data_manager.add_to_backlog(reminder["text"])
+    def _forget_flyout(self, flyout):
+        if self.flyout is flyout:
+            self.flyout = None
 
-                self._skip_if_already_due(reminder)
+    def rebuild_flyout(self):
+        """Re-create the open flyout so it picks up new colors and sizes."""
+        if self.flyout is None:
+            return
+        old, self.flyout = self.flyout, None
+        old.close()
+        self.show_reminder_list(animate=False)
 
-                if self.notify_list_dialog and self.notify_list_dialog.isVisible():
-                    # UI will update automatically via callback
-                    pass
-                else:
-                    self.show_reminder_list()
+    def preview_appearance(self, mode, palette, text_size):
+        """Apply theme, color and text size right away (Settings calls this on every change)."""
+        settings = dict(self.config_dynamic.get("settings_dialog", {}))
+        settings.update(theme=mode, palette=palette, text_size=text_size)
+        apply_theme(self.app, {"settings_dialog": settings})
+        self.setup_tray_menu()
+        self._update_tray_icon()
+        self.rebuild_flyout()
 
-    def edit_reminder(self, reminder):
-        self.show_add_reminder_dialog(reminder)
+    def _on_data_changed(self, _data):
+        if self.flyout is not None:
+            self.flyout.refresh()
+
+    # ---------- pause ----------
+
+    def is_paused(self):
+        return self.paused_until is not None
+
+    def set_paused(self, on):
+        if on:
+            self.paused_until = datetime.datetime.now() + datetime.timedelta(minutes=PAUSE_MINUTES)
+            self._pause_timer.start(PAUSE_MINUTES * 60 * 1000)
+        else:
+            self.paused_until = None
+            self._pause_timer.stop()
+        self._update_tray_icon()
+        if self.flyout is not None:
+            self.flyout.pause.blockSignals(True)
+            self.flyout.pause.setChecked(on)
+            self.flyout.pause.blockSignals(False)
+            self.flyout.refresh()
+
+    # ---------- editing ----------
+
+    def _validate_reminder(self, reminder):
+        return "id" in reminder and "text" in reminder
+
+    def open_editor(self, reminder_data=None):
+        suggestions = [b.get("text", "") for b in self.data_manager.get_backlog() if b.get("text")]
+        dialog = ReminderEditor(reminder_data, suggestions, self.flyout)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        reminder = dialog.get_data()
+        if not (reminder["text"] and self._validate_reminder(reminder)):
+            return
+        if reminder_data:
+            # If the time moved later, forget today's "shown" mark so it can fire again
+            old_time, new_time = reminder_data.get("time"), reminder.get("time")
+            if old_time and new_time and new_time > old_time:
+                self.data_manager.remove_completed_entry(reminder_data["id"])
+            self.data_manager.update_reminder(reminder_data["id"], reminder)
+        else:
+            self.data_manager.add_reminder(reminder)
+            self.data_manager.add_to_backlog(reminder["text"])
+        self._skip_if_already_due(reminder)
+
+    # Older name, kept for anything that still calls it
+    show_add_reminder_dialog = open_editor
 
     def _skip_if_already_due(self, reminder):
         """A recurring reminder saved after its time for today (or its day this month/year)
@@ -212,66 +190,88 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
             self.data_manager.add_completed_entry(reminder["id"])
 
     def show_settings_dialog(self):
-        dialog = SettingsDialog(self.config_static, self.config_dynamic, self.main_window, self.data_manager)
-        dialog.setWindowIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
+        # No parent: the flyout is re-created while Settings is open
+        dialog = SettingsDialog(self.config_static, self.config_dynamic, None, self.data_manager,
+                                on_preview=self.preview_appearance)
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             self.config_dynamic = dialog.get_config_data()
             self.data_manager.update_config_dynamic(self.config_dynamic)
             self.timer.setInterval(self.config_dynamic["settings_dialog"]["reminder_check_interval_sec"] * 1000)
-            self.setIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
-            self.setToolTip(self.config_static["tray"]["tray_tooltip"])
 
     def delete_reminder(self, reminder):
         """Delete a reminder for good (user clicked the delete button and confirmed)"""
         if not self._validate_reminder(reminder):
             return
-
         # remove_reminder also keeps the text in the backlog for suggestions
         self.data_manager.remove_reminder(reminder["id"])
 
-        if self.notify_list_dialog and self.notify_list_dialog.isVisible():
-            # UI will update automatically via callback
-            pass
-        else:
-            self.show_reminder_list()
+    # ---------- firing ----------
+
+    def check_overdue_reminders(self):
+        """Show one-time reminders whose time passed while the app was not running"""
+        now = datetime.datetime.now()
+        overdue = []
+        for reminder in self.data_manager.get_reminders():
+            if self._validate_reminder(reminder) and reminder.get("recurrence_type") == "once":
+                occ = schedule.next_occurrence(reminder, now)
+                if occ is not None and occ < now:
+                    overdue.append((occ, reminder))
+        for occ, reminder in sorted(overdue, key=lambda x: x[0]):
+            self.show_fullscreen_reminder(reminder, occ)
+            self.mark_reminder_completed(reminder)
 
     def mark_reminder_completed(self, reminder, overdue=False):
-        """Mark a reminder as completed and handle file updates"""
+        """Mark a reminder as shown: one-time ones are removed, recurring ones remember today."""
         if not self._validate_reminder(reminder):
             return
-
-        reminder_id = reminder["id"]
-        reminder_text = reminder["text"]
-        recurrence_type = reminder.get("recurrence_type")
-
-        if recurrence_type == "once":
-            # For one-time reminders:
-            # 1. Add to backlog
-            self.data_manager.add_to_backlog(reminder_text)
-            # 2. Remove from notifications
-            self.data_manager.remove_reminder(reminder_id)
+        if reminder.get("recurrence_type") == "once":
+            # remove_reminder also keeps the text in the backlog for suggestions
+            self.data_manager.remove_reminder(reminder["id"])
         else:
-            # For recurring reminders, just mark as completed today
-            self.data_manager.add_completed_entry(reminder_id)
+            self.data_manager.add_completed_entry(reminder["id"])
 
     def check_reminders(self):
         """Main reminder checking logic - called periodically"""
+        if self.paused_until is not None:
+            return
         now = datetime.datetime.now()
-        reminders = self.data_manager.get_reminders()
         completed = self.data_manager.get_completed()
-        completed_records = {c["id"] for c in completed}
+        completed_map = {c.get("id"): c.get("completed_at") for c in completed}
 
-        for reminder in reminders[:]:
+        for reminder in self.data_manager.get_reminders():
             if not self._validate_reminder(reminder):
                 continue
-
-            should_show = self.should_show_reminder(reminder, now, completed_records, completed)
-            if should_show:
-                self.show_fullscreen_reminder(reminder["text"], reminder.get("icon"))
+            early = self._early_occurrence(reminder, now, completed_map)
+            if early is not None:
+                days = reminder["remind_before_days"]
+                self.show_fullscreen_reminder(
+                    reminder, early, f"Coming up in {days} day{'s' if days > 1 else ''}: "
+                                     f"{schedule.WEEKDAYS[early.weekday()]}, {schedule.MONTHS[early.month - 1]} {early.day}")
+                self.data_manager.add_completed_entry(f"{reminder['id']}:early")
+            if self.should_show_reminder(reminder, now, set(), completed):
+                occ = schedule.next_occurrence(reminder, now, completed_map.get(reminder["id"]))
+                self.show_fullscreen_reminder(reminder, occ)
                 self.mark_reminder_completed(reminder)
 
+    def _early_occurrence(self, reminder, now, completed_map):
+        """'Remind me earlier': the occurrence a heads-up is due for right now, if any.
+        The heads-up has its own 'shown' mark (<id>:early), so it fires once per occurrence."""
+        days = reminder.get("remind_before_days")
+        if not days:
+            return None
+        shift = datetime.timedelta(days=days)
+        last = completed_map.get(f"{reminder['id']}:early")
+        try:
+            last_shifted = datetime.datetime.fromisoformat(last) + shift if last else None
+        except ValueError:
+            last_shifted = None
+        occ = schedule.next_occurrence(reminder, now + shift, last_shifted)
+        if occ is not None and now < occ <= now + shift:
+            return occ
+        return None
+
     def should_show_reminder(self, reminder, now, completed_records, completed=None):
-        """Check if a reminder should be shown at the given time, передаёт дату последнего показа в методы проверок"""
+        """Check if a reminder should be shown at the given time"""
         reminder_id = reminder.get("id")
         recurrence_type = reminder.get("recurrence_type")
         last_completed_at = None
@@ -293,9 +293,10 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         else:
             return True
 
-    def show_fullscreen_reminder(self, text, icon_path):
-        popup = FullscreenReminder(text, icon_path, self.config_static)
-        popup.setWindowIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
+    def show_fullscreen_reminder(self, reminder, scheduled=None, note=None):
+        if self.flyout is not None:
+            self.flyout.close()
+        popup = FullscreenReminder(reminder, scheduled, note)
         # Hold on to the window until the user closes it. A window nothing refers to
         # gets collected by Python's garbage collector and vanishes on its own.
         self._popups.append(popup)
@@ -309,9 +310,17 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
     def exit_app(self):
         # Force save all changes before exit
         self.data_manager.force_save_all()
-        
         self.hide()
         self.app.quit()
+
+
+def apply_theme(app, config_dynamic):
+    settings = config_dynamic.get("settings_dialog", {})
+    theme.set_mode(settings.get("theme", "system"), settings.get("palette"), settings.get("text_size"))
+    app.setFont(theme.font(13))
+    app.setStyleSheet(theme.stylesheet())
+    app.setWindowIcon(theme.tile_icon())
+
 
 if __name__ == "__main__":
     # Config and data files are relative paths: always run from the app folder,
@@ -349,13 +358,9 @@ if __name__ == "__main__":
     ])
 
     config_dynamic = load_json(paths["config_dynamic_path"], {})
-
-    # Safely get tray icon path with fallback
-    tray_icon_path = config_static.get("paths", {}).get("tray_icon", "icons/icon.png")
-    app.setWindowIcon(QtGui.QIcon(tray_icon_path))
+    apply_theme(app, config_dynamic)
 
     main_window = QtWidgets.QMainWindow()
-    main_window.setWindowIcon(QtGui.QIcon(tray_icon_path))
     main_window.hide()
 
     tray = NotifyApp(app, config_static, config_dynamic, main_window)

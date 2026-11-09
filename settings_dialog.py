@@ -1,209 +1,173 @@
-import os
-from PyQt6 import QtWidgets, QtGui
-import autostart
-from utils import save_json
+from PyQt6 import QtCore, QtWidgets
 
-class SettingsDialog(QtWidgets.QDialog):
-    def __init__(self, config_static, config_dynamic, parent, data_manager=None, icon_path=None):
+import autostart
+import theme
+from utils import save_json
+from widgets import GlassDialog, IconButton, Segmented, Toggle, confirm, divider, label
+
+THEMES = ["system", "dark", "light"]
+SIZES = ["normal", "large", "larger"]
+
+
+def _index(options, value, default):
+    return options.index(value) if value in options else options.index(default)
+
+
+class SettingsDialog(GlassDialog):
+    """Appearance changes apply at once (on_preview); Cancel puts the old look back."""
+
+    def __init__(self, config_static, config_dynamic, parent=None, data_manager=None, on_preview=None):
         super().__init__(parent)
         self.config_static = config_static
         self.config_dynamic = config_dynamic
-        self.parent = parent
         self.data_manager = data_manager
-        self.setWindowTitle(self.config_static["settings_dialog"]["window_title"])
+        self.on_preview = on_preview
+        self.setWindowTitle("Settings")
+        settings = config_dynamic.setdefault("settings_dialog", {})
+        self.original = {k: settings.get(k) for k in ("theme", "palette", "text_size")}
+        self.pending = {
+            "theme": settings.get("theme", "system"),
+            # Only one color scheme is left; an old saved "steel" becomes the default
+            "palette": settings.get("palette") if settings.get("palette") in theme.PALETTES else theme.DEFAULT_PALETTE,
+            "text_size": settings.get("text_size", theme.DEFAULT_SIZE),
+            "autostart": autostart.is_enabled(),
+            "interval": settings.get("reminder_check_interval_sec", 10),
+        }
+        self.outer = QtWidgets.QVBoxLayout(self)
+        self.outer.setContentsMargins(0, 0, 0, 0)
+        self.body = None
+        self._build()
 
-        # Set window icon if provided
-        if icon_path and os.path.exists(icon_path):
-            self.setWindowIcon(QtGui.QIcon(icon_path))
+    # ----- layout (rebuilt after every appearance change, so sizes and colors update at once) -----
 
-        # Apply dark theme styling with f-string to avoid .format() issues
-        arrow_up_path = os.path.join(os.path.abspath("icons"), "arrow-up-white.svg").replace("\\", "/")
-        arrow_down_path = os.path.join(os.path.abspath("icons"), "arrow-down-white.svg").replace("\\", "/")
-        self.setStyleSheet(f"""
-            QDialog {{ 
-                background-color: #1e1e1e; 
-                color: #ffffff; 
-                font-family: 'Segoe UI', Arial, sans-serif; 
-            }}
-            QCheckBox {{ 
-                color: #ffffff; 
-                font-size: 12px; 
-                spacing: 8px;
-            }}
-            QCheckBox::indicator {{
-                width: 16px;
-                height: 16px;
-                border: 2px solid #444444;
-                border-radius: 3px;
-                background-color: #2e2e2e;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: #0d7377;
-                border-color: #1a8c99;
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: #555555;
-            }}
-            QLabel {{ 
-                color: #ffffff; 
-                font-size: 12px; 
-            }}
-            QSpinBox {{
-                padding-right: 30px;
-                min-height: 30px;
-                font-size: 16px;
-                color: #ffffff;
-                background-color: #2e2e2e;
-                border: 1px solid #444444;
-                border-radius: 4px;
-            }}
-            QSpinBox:focus {{
-                border-color: #0d7377;
-            }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                width: 24px;
-                height: 18px;
-                border: none;
-                background: transparent;
-            }}
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-                background-color: #444444;
-            }}
-            QSpinBox::up-arrow {{
-                width: 16px;
-                height: 16px;
-                image: url("{arrow_up_path}");
-            }}
-            QSpinBox::down-arrow {{
-                width: 16px;
-                height: 16px;
-                image: url("{arrow_down_path}");
-            }}
-            QPushButton {{
-                background-color: #2e2e2e;
-                border: 1px solid #444444;
-                border-radius: 6px;
-                padding: 8px 16px;
-                color: #ffffff;
-                font-weight: 500;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: #3e3e3e;
-                border-color: #555555;
-            }}
-            QPushButton:pressed {{
-                background-color: #1e1e1e;
-            }}
-        """)
+    def _build(self):
+        if self.body is not None:
+            self.pending["autostart"] = self.autostart.isChecked()
+            self.pending["interval"] = self.interval.value()
+            self.body.hide()
+            self.body.deleteLater()
+        self.setFixedWidth(theme.px(420))
+        self.body = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(self.body)
+        root.setContentsMargins(theme.px(24), theme.px(20), theme.px(24), theme.px(20))
+        root.setSpacing(theme.px(6))
 
-        self.setup_ui()
+        head = QtWidgets.QHBoxLayout()
+        head.addWidget(label("Settings", "h2"))
+        head.addStretch()
+        close = IconButton("close", "Close", 32, 18)
+        close.clicked.connect(self.reject)
+        head.addWidget(close)
+        root.addLayout(head)
+        root.addSpacing(theme.px(8))
 
-    def setup_ui(self):
-        layout = QtWidgets.QVBoxLayout()
-        layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
+        self.theme_choice = self._segmented(root, "Appearance", ["System", "Dark", "Light"],
+                                            _index(THEMES, self.pending["theme"], "system"), "theme", THEMES)
+        self.size_choice = self._segmented(root, "Text size", ["Normal", "Large", "Larger"],
+                                           _index(SIZES, self.pending["text_size"], theme.DEFAULT_SIZE),
+                                           "text_size", SIZES)
 
-        # Auto-start checkbox
-        self.auto_run_checkbox = QtWidgets.QCheckBox(self.config_static["settings_dialog"]["autostart_label"])
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(label("Start with Windows", "field"))
+        row.addStretch()
         # Applied in accept(), so Cancel really cancels
-        self.auto_run_checkbox.setChecked(autostart.is_enabled())
-        layout.addWidget(self.auto_run_checkbox)
+        self.autostart = Toggle()
+        self.autostart.setAccessibleName("Start with Windows")
+        self.autostart.setChecked(self.pending["autostart"])
+        row.addWidget(self.autostart)
+        root.addLayout(row)
+        root.addSpacing(theme.px(10))
 
-        # Spacing
-        layout.addSpacing(8)
+        root.addWidget(label("Check for due reminders every", "field"))
+        self.interval = QtWidgets.QSpinBox()
+        self.interval.setRange(5, 3600)
+        self.interval.setSuffix(" sec")
+        self.interval.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.interval.setFixedWidth(theme.px(120))
+        self.interval.setValue(self.pending["interval"])
+        root.addWidget(self.interval)
+        root.addSpacing(theme.px(10))
 
-        # Interval setting
-        interval_label = QtWidgets.QLabel(self.config_static["settings_dialog"]["interval_label"])
-        layout.addWidget(interval_label)
+        clear_row = QtWidgets.QHBoxLayout()
+        clear_row.addWidget(label("Title suggestions", "field"))
+        clear_row.addStretch()
+        clear = QtWidgets.QPushButton("Clear")
+        clear.clicked.connect(self.clear_backlog)
+        clear_row.addWidget(clear)
+        root.addLayout(clear_row)
 
-        self.interval_spinbox = QtWidgets.QSpinBox()
-        self.interval_spinbox.setRange(5, 3600)
-        self.interval_spinbox.setSuffix(" sec")
-        self.interval_spinbox.setValue(self.config_dynamic["settings_dialog"]["reminder_check_interval_sec"])
-        layout.addWidget(self.interval_spinbox)
+        root.addSpacing(theme.px(12))
+        root.addWidget(divider())
+        root.addSpacing(theme.px(10))
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch()
+        cancel = QtWidgets.QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        save = QtWidgets.QPushButton("Save")
+        save.setProperty("kind", "primary")
+        save.setMinimumWidth(theme.px(96))
+        save.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(save)
+        root.addLayout(buttons)
 
-        # Spacing before buttons
-        layout.addSpacing(12)
+        self.outer.addWidget(self.body)
+        self.adjustSize()
+        self.update()
 
-        # Clear Backlog button
-        clear_backlog_btn = QtWidgets.QPushButton("Clear Backlog")
-        clear_backlog_btn.clicked.connect(self.clear_backlog)
-        layout.addWidget(clear_backlog_btn)
+    def _segmented(self, root, title, options, index, key, values):
+        root.addWidget(label(title, "field"))
+        seg = Segmented(options)
+        seg.set_index(index)
+        seg.changed.connect(lambda i: self._appearance_changed(key, values[i]))
+        root.addWidget(seg)
+        root.addSpacing(theme.px(10))
+        return seg
 
-        # Buttons
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok |
-            QtWidgets.QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+    def _appearance_changed(self, key, value):
+        if self.pending[key] == value:
+            return
+        self.pending[key] = value
+        if self.on_preview:
+            self.on_preview(self.pending["theme"], self.pending["palette"], self.pending["text_size"])
+        # Rebuild after the click finishes (the clicked button is part of what gets replaced)
+        QtCore.QTimer.singleShot(0, self._build)
 
-        self.setLayout(layout)
-        self.setFixedSize(self.sizeHint())
+    # ----- results -----
 
     def get_config_data(self):
         """Get updated configuration data"""
-        self.config_dynamic["settings_dialog"]["reminder_check_interval_sec"] = self.interval_spinbox.value()
-        self.config_dynamic["settings_dialog"]["autostart"] = self.auto_run_checkbox.isChecked()
+        settings = self.config_dynamic.setdefault("settings_dialog", {})
+        settings["reminder_check_interval_sec"] = self.interval.value()
+        settings["autostart"] = self.autostart.isChecked()
+        settings["theme"] = self.pending["theme"]
+        settings["palette"] = self.pending["palette"]
+        settings["text_size"] = self.pending["text_size"]
         return self.config_dynamic
 
     def accept(self):
         try:
-            autostart.set_enabled(self.auto_run_checkbox.isChecked())
+            autostart.set_enabled(self.autostart.isChecked())
         except OSError:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Error",
-                "Failed to change autostart settings. Please check your access rights."
-            )
+            confirm(self, "Couldn't change autostart",
+                    "Windows didn't let Notify change the startup setting. Check your access rights.", "OK")
             return
-        self.save_position()
         super().accept()
 
     def reject(self):
-        self.save_position()
+        changed = any(self.pending[k] != (self.original[k] or d) for k, d in
+                      (("theme", "system"), ("palette", theme.DEFAULT_PALETTE), ("text_size", theme.DEFAULT_SIZE)))
+        if changed and self.on_preview:
+            self.on_preview(self.original["theme"] or "system", self.original["palette"], self.original["text_size"])
         super().reject()
 
-    def restore_position(self):
-        pos = self.config_dynamic["settings_dialog"].get("window_pos")
-        if pos:
-            screen = QtWidgets.QApplication.primaryScreen().geometry()
-            x = min(pos.get("x", 0), screen.width() - pos.get("width", self.width()))
-            y = max(0, min(pos.get("y", 0), screen.height() - pos.get("height", self.height())))
-            self.move(x, y)
-            if "width" in pos and "height" in pos:
-                self.resize(pos["width"], pos["height"])
-
-    def save_position(self):
-        pos = self.pos()
-        size = self.size()
-        screen = QtWidgets.QApplication.primaryScreen().geometry()
-        self.config_dynamic["settings_dialog"]["window_pos"] = {
-            "x": pos.x(),
-            "y": pos.y(),
-            "width": size.width(),
-            "height": size.height()
-        }
-        save_json(self.config_static["paths"]["config_dynamic_path"], self.config_dynamic)
-
-    def closeEvent(self, event):
-        self.save_position()
-        super().closeEvent(event)
-
     def clear_backlog(self):
-        reply = QtWidgets.QMessageBox.question(
-            self,
-            "Clear Backlog",
-            "Are you sure you want to clear all backlog suggestions? This cannot be undone.",
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
-        )
-        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            # Go through the data manager: it keeps the backlog cached in memory and
-            # would write the old list back on the next save if only the file were cleared.
-            if self.data_manager:
-                self.data_manager.update_backlog([])
-            else:
-                save_json(self.config_static["paths"]["backlog_path"], [])
-            QtWidgets.QMessageBox.information(self, "Backlog Cleared", "Backlog has been cleared.")
+        if not confirm(self, "Clear suggestions?",
+                       "Titles you used before will no longer be suggested. This can't be undone.", "Clear"):
+            return
+        # Go through the data manager: it keeps the backlog cached in memory and
+        # would write the old list back on the next save if only the file were cleared.
+        if self.data_manager:
+            self.data_manager.update_backlog([])
+        else:
+            save_json(self.config_static["paths"]["backlog_path"], [])

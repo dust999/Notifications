@@ -225,7 +225,7 @@ class DataManager:
         with self._lock:
             completed = self._cache.get('completed', [])
             # Remove all entries for this reminder ID
-            completed = [c for c in completed if c.get("id") != reminder_id]
+            completed = [c for c in completed if c.get("id", "").split(":")[0] != reminder_id]
             
             self._cache['completed'] = completed
             self._dirty_flags['completed'] = True
@@ -237,7 +237,7 @@ class DataManager:
         with self._lock:
             completed = self._cache.get('completed', [])
             # Remove all entries for this reminder ID
-            completed = [c for c in completed if c.get("id") != reminder_id]
+            completed = [c for c in completed if c.get("id", "").split(":")[0] != reminder_id]
             
             self._cache['completed'] = completed
             self._dirty_flags['completed'] = True
@@ -301,7 +301,8 @@ class DataManager:
         current_ids = {reminder.get("id") for reminder in reminders if reminder.get("id")}
         
         # Filter out outdated entries
-        valid_completed = [entry for entry in completed if entry.get("id") in current_ids]
+        # "<id>:early" entries are heads-up marks of reminder <id>
+        valid_completed = [entry for entry in completed if entry.get("id", "").split(":")[0] in current_ids]
         
         # Update if there were changes
         if len(valid_completed) != len(completed):

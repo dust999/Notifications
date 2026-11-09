@@ -10,6 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from reminder_check import ReminderChecker
+import schedule
 from utils import load_json, prepare_data_files, save_json
 
 
@@ -162,6 +163,65 @@ class SampleDataTest(unittest.TestCase):
             self.assertIn(r["recurrence_type"], ("once", "daily", "weekly", "monthly", "yearly"))
             if r.get("icon"):
                 self.assertTrue(os.path.exists(os.path.join(ROOT, r["icon"])), r["icon"])
+
+
+class ScheduleTest(unittest.TestCase):
+    """Next occurrence and plain-words labels used by the list window."""
+    NOW = datetime.datetime(2026, 11, 9, 13, 20)  # Monday
+
+    def test_daily_due_later_today_then_tomorrow_once_shown(self):
+        r = {"recurrence_type": "daily", "time": "20:00"}
+        self.assertEqual(schedule.next_occurrence(r, self.NOW), datetime.datetime(2026, 11, 9, 20, 0))
+        shown = datetime.datetime(2026, 11, 9, 20, 0, 5)
+        self.assertEqual(schedule.next_occurrence(r, self.NOW, shown.isoformat()), datetime.datetime(2026, 11, 10, 20, 0))
+
+    def test_weekly_skips_other_days(self):
+        r = {"recurrence_type": "weekly", "time": "10:30", "weekly_days": [2, 4]}
+        self.assertEqual(schedule.next_occurrence(r, self.NOW), datetime.datetime(2026, 11, 11, 10, 30))
+
+    def test_monthly_clamps_and_moves_on_after_shown(self):
+        r = {"recurrence_type": "monthly", "time": "10:00", "monthly_day": 31}
+        self.assertEqual(schedule.next_occurrence(r, self.NOW), datetime.datetime(2026, 11, 30, 10, 0))
+        r = {"recurrence_type": "monthly", "time": "09:00", "monthly_day": 5}
+        shown = datetime.datetime(2026, 11, 5, 9, 0, 3)
+        self.assertEqual(schedule.next_occurrence(r, self.NOW, shown), datetime.datetime(2026, 12, 5, 9, 0))
+
+    def test_yearly_next_year_when_shown(self):
+        r = {"recurrence_type": "yearly", "time": "09:00", "yearly_month": 6, "yearly_day": 16}
+        shown = datetime.datetime(2026, 6, 16, 9, 0)
+        self.assertEqual(schedule.next_occurrence(r, self.NOW, shown), datetime.datetime(2027, 6, 16, 9, 0))
+
+    def test_missed_occurrence_rolls_to_next_like_the_checker(self):
+        # Mar 1 passed while the app was off; the checker only shows yearly ones in their month
+        r = {"recurrence_type": "yearly", "time": "09:00", "yearly_month": 3, "yearly_day": 1}
+        self.assertEqual(schedule.next_occurrence(r, self.NOW), datetime.datetime(2027, 3, 1, 9, 0))
+        self.assertFalse(ReminderChecker.yearly(r, self.NOW, None))
+        # Earlier today and not shown yet: still due now, the checker will show it
+        r = {"recurrence_type": "daily", "time": "09:00"}
+        self.assertEqual(schedule.next_occurrence(r, self.NOW), datetime.datetime(2026, 11, 9, 9, 0))
+        self.assertTrue(ReminderChecker.daily(r, self.NOW, None))
+
+    def test_describe_rule(self):
+        self.assertEqual(schedule.describe_rule({"recurrence_type": "weekly", "time": "13:00", "weekly_days": [0, 1, 2, 3, 4]}), "Weekdays at 13:00")
+        self.assertEqual(schedule.describe_rule({"recurrence_type": "monthly", "time": "09:00", "monthly_day": 2}), "Every month on the 2nd at 09:00")
+        self.assertEqual(schedule.describe_rule({"recurrence_type": "monthly", "time": "09:00", "monthly_day": 11}), "Every month on the 11th at 09:00")
+        self.assertEqual(schedule.describe_rule({"recurrence_type": "yearly", "time": "09:00", "yearly_month": 3, "yearly_day": 1}), "Every year on Mar 1 at 09:00")
+
+    def test_groups_and_labels(self):
+        at = lambda d, h=9: datetime.datetime(2026, 11, d, h, 0)
+        self.assertEqual(schedule.group_of(at(9, 20), self.NOW), "Today")
+        self.assertEqual(schedule.group_of(at(10), self.NOW), "Tomorrow")
+        self.assertEqual(schedule.group_of(at(15), self.NOW), "This week")  # Sunday
+        self.assertEqual(schedule.group_of(at(16), self.NOW), "Later")
+        self.assertEqual(schedule.relative_label(at(9, 16), self.NOW), "in 2 h")
+        self.assertEqual(schedule.relative_label(at(10), self.NOW), "Tue 09:00")
+        self.assertEqual(schedule.relative_label(datetime.datetime(2027, 3, 1, 9), self.NOW), "Mar 1, 2027")
+        self.assertEqual(schedule.countdown(datetime.datetime(2026, 11, 9, 19, 38), self.NOW), "in 6 h 18 min")
+
+    def test_category_from_old_icon_path(self):
+        self.assertEqual(schedule.category_of({"icon": "icons/home.png"}), "personal")
+        self.assertEqual(schedule.category_of({"icon": ""}), "none")
+        self.assertEqual(schedule.category_of({"category": "health", "icon": "icons/work.png"}), "health")
 
 
 if __name__ == "__main__":
