@@ -100,6 +100,12 @@ class RemindersFlyout(GlassWindow):
         settings._side = side
         settings.setFixedSize(side, side)
         settings.clicked.connect(self.app.show_settings_dialog)
+        calendar = IconButton("calendar", "Calendar", 36, 20)
+        calendar.setProperty("kind", "tool")
+        calendar._side = side
+        calendar.setFixedSize(side, side)
+        calendar.clicked.connect(lambda: self.app.show_calendar())
+        head.addWidget(calendar)
         head.addWidget(settings)
         root.addSpacing(4)
         root.addLayout(head)

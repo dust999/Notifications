@@ -226,3 +226,31 @@ class ScheduleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CalendarOccurrencesTest(unittest.TestCase):
+    def test_daily_and_weekly_fill_a_range(self):
+        first, last = datetime.date(2026, 11, 1), datetime.date(2026, 11, 30)
+        daily = {"recurrence_type": "daily", "time": "11:00"}
+        self.assertEqual(len(schedule.occurrences_between(daily, first, last)), 30)
+        weekly = {"recurrence_type": "weekly", "time": "18:00", "weekly_days": [5]}
+        days = [o.day for o in schedule.occurrences_between(weekly, first, last)]
+        self.assertEqual(days, [7, 14, 21, 28])
+
+    def test_monthly_yearly_once(self):
+        first, last = datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)
+        monthly = {"recurrence_type": "monthly", "time": "09:00", "monthly_day": 31}
+        occ = schedule.occurrences_between(monthly, first, last)
+        self.assertEqual(len(occ), 12)
+        self.assertEqual(occ[1].date(), datetime.date(2026, 2, 28))  # shorter month: last day
+        yearly = {"recurrence_type": "yearly", "time": "09:00", "yearly_month": 6, "yearly_day": 16}
+        self.assertEqual([o.date() for o in schedule.occurrences_between(yearly, first, last)],
+                         [datetime.date(2026, 6, 16)])
+        once = {"recurrence_type": "once", "time": "15:30", "date": "2026-11-14"}
+        self.assertEqual(len(schedule.occurrences_between(once, first, last)), 1)
+        self.assertEqual(schedule.occurrences_between(once, datetime.date(2026, 11, 15), last), [])
+
+    def test_range_starting_mid_month(self):
+        monthly = {"recurrence_type": "monthly", "time": "09:00", "monthly_day": 10}
+        occ = schedule.occurrences_between(monthly, datetime.date(2026, 11, 20), datetime.date(2027, 1, 5))
+        self.assertEqual([o.date() for o in occ], [datetime.date(2026, 12, 10)])

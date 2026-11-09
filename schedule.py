@@ -69,6 +69,23 @@ def _occurrences(reminder, start):
             yield datetime.datetime(y, month, _clamp_day(y, month, day), t.hour, t.minute)
 
 
+def occurrences_between(reminder, first, last):
+    """Occurrences on the days first..last (dates, both included), in order. For the calendar."""
+    found = []
+    for occ in _occurrences(reminder, first):
+        if occ.date() > last:
+            break
+        if occ.date() >= first:
+            found.append(occ)
+    return found
+
+
+def is_date_specific(reminder):
+    """One-time, monthly and yearly reminders belong to particular dates (bills, birthdays);
+    daily and weekly ones repeat all the time."""
+    return reminder.get("recurrence_type") in ("once", "monthly", "yearly")
+
+
 def _period_start(reminder, now):
     kind = reminder.get("recurrence_type")
     if kind == "monthly":

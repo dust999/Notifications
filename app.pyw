@@ -9,6 +9,7 @@ from settings_dialog import SettingsDialog
 from reminder_check import ReminderChecker
 from editor import ReminderEditor
 from flyout import RemindersFlyout
+from calendar_window import CalendarWindow
 import autostart
 import schedule
 import theme
@@ -25,6 +26,8 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self._popups = []
         # The flyout is created when opened and deleted when closed (saves memory)
         self.flyout = None
+        # Same for the calendar window
+        self.calendar = None
 
         # Initialize centralized data manager
         self.data_manager = DataManager(config_static)
@@ -64,6 +67,7 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.menu = QtWidgets.QMenu()
         icon = lambda name: theme.icon(name, theme.c("text2"), 16)
         self.menu.addAction(icon("open-list"), "Open reminders", self.show_reminder_list)
+        self.menu.addAction(icon("calendar"), "Calendar", self.show_calendar)
         self.menu.addAction(icon("add"), "New reminder", lambda: self.open_editor(None))
         self.menu.addAction(icon("settings"), "Settings", self.show_settings_dialog)
         self.menu.addSeparator()
@@ -110,19 +114,54 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.setup_tray_menu()
         self._update_tray_icon()
         self.rebuild_flyout()
+        self.rebuild_calendar()
 
     def _on_data_changed(self, _data):
         if self.flyout is not None:
             self.flyout.refresh()
+        if self.calendar is not None:
+            self.calendar.refresh()
+
+    # ---------- calendar ----------
+
+    def show_calendar(self, view=None, date=None):
+        """Open the calendar window, or bring it to the front if it's already open."""
+        if self.flyout is not None:
+            self.flyout.close()
+        if self.calendar is None:
+            window = CalendarWindow(self)
+            self.calendar = window
+            window.destroyed.connect(lambda _=None, w=window: self._forget_calendar(w))
+            if view:
+                window.set_view(view, date)
+            window.show()
+        self.calendar.showNormal()
+        self.calendar.raise_()
+        self.calendar.activateWindow()
+
+    def _forget_calendar(self, window):
+        if self.calendar is window:
+            self.calendar = None
+
+    def rebuild_calendar(self):
+        """Re-create the open calendar (new text size), keeping its view and date."""
+        if self.calendar is None:
+            return
+        old, self.calendar = self.calendar, None
+        view, date, geometry = old.view, old.date, old.geometry()
+        old.close()
+        self.show_calendar(view, date)
+        self.calendar.setGeometry(geometry)
 
     # ---------- editing ----------
 
     def _validate_reminder(self, reminder):
         return "id" in reminder and "text" in reminder
 
-    def open_editor(self, reminder_data=None):
+    def open_editor(self, reminder_data=None, initial=None, parent=None):
+        """`initial`: datetime for a new reminder; `parent`: the window it opens over (the list by default)."""
         suggestions = [b.get("text", "") for b in self.data_manager.get_backlog() if b.get("text")]
-        dialog = ReminderEditor(reminder_data, suggestions, self.flyout)
+        dialog = ReminderEditor(reminder_data, suggestions, parent or self.flyout, initial)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         reminder = dialog.get_data()

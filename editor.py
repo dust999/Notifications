@@ -15,8 +15,10 @@ CATEGORY_ICONS = {"work": "icons/work.png", "personal": "icons/home.png",
 
 
 class ReminderEditor(GlassDialog):
-    def __init__(self, reminder=None, suggestions=(), parent=None):
+    def __init__(self, reminder=None, suggestions=(), parent=None, initial=None):
+        """`initial`: a datetime to start a new reminder at (the calendar passes the clicked day/time)."""
         super().__init__(parent)
+        self.initial = initial
         self.reminder = reminder
         self.setFixedWidth(theme.px(470))
         self.setWindowTitle("Edit reminder" if reminder else "New reminder")
@@ -165,7 +167,7 @@ class ReminderEditor(GlassDialog):
     # ----- load / collect -----
 
     def _load(self, r):
-        soon = datetime.datetime.now() + datetime.timedelta(minutes=5)
+        soon = self.initial or datetime.datetime.now() + datetime.timedelta(minutes=5)
         r = r or {}
         self.title.setText(r.get("text", ""))
         t = schedule._time_of(r) or soon.time()

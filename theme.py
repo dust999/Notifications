@@ -245,6 +245,24 @@ def apply_glass(widget, kind="acrylic"):
         return False
 
 
+def style_title_bar(widget):
+    """Native title bar in the app's colors: dark or light, and on Windows 11 the window's own color."""
+    if sys.platform != "win32":
+        return
+    try:
+        hwnd = int(widget.winId())
+        dwm = ctypes.windll.dwmapi
+        dark = ctypes.c_int(1 if is_dark() else 0)
+        dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark))  # immersive dark mode
+        if _windows_build() >= 22000:
+            for attr, name in ((35, "surface_solid"), (36, "text")):  # caption color, caption text color
+                col = qcolor(c(name))
+                ref = ctypes.c_uint(col.red() | (col.green() << 8) | (col.blue() << 16))
+                dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(ref), ctypes.sizeof(ref))
+    except (OSError, AttributeError):
+        pass
+
+
 # ---------- global stylesheet ----------
 
 def stylesheet():
