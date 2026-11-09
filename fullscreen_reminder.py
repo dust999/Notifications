@@ -2,9 +2,12 @@ import os
 from PyQt6 import QtWidgets, QtGui, QtCore
 
 class FullscreenReminder(QtWidgets.QWidget):
+    closed = QtCore.pyqtSignal()
+
     def __init__(self, text, icon_path, config):
         super().__init__()
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowOpacity(0.85)
         self.showFullScreen()
 
@@ -39,7 +42,16 @@ class FullscreenReminder(QtWidgets.QWidget):
         main_layout.addStretch(1)
 
         self.setLayout(main_layout)
-        self.mousePressEvent = self.close_on_click
 
-    def close_on_click(self, event):
+    def mousePressEvent(self, event):
         self.close()
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)

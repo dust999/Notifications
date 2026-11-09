@@ -1,2 +1,14 @@
 ﻿.idea
 __pycache__
+*.bak
+*.tmp
+*.corrupt-*
+# Personal data: reminders, settings, Google credentials.
+# Git keeps the empty folder, never its contents.
+/user_data/*
+!/user_data/.gitkeep
+# Where older versions kept the same files (the app moves them into user_data/)
+/notify.json
+/backlog.json
+/completed.json
+/config_dynamic.json

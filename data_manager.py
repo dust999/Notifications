@@ -25,7 +25,7 @@ class DataManager:
             'reminders': config_static["paths"]["notify_path"],
             'backlog': config_static["paths"]["backlog_path"],
             'completed': config_static["paths"]["completed_path"],
-            'config_dynamic': "config_dynamic.json"
+            'config_dynamic': config_static["paths"]["config_dynamic_path"],
         }
         
         # Subscribers for changes

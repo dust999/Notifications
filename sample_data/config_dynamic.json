@@ -1,0 +1,8 @@
+{
+    "add_notify_dialog": {},
+    "notify_list_dialog": {},
+    "settings_dialog": {
+        "autostart": false,
+        "reminder_check_interval_sec": 10
+    }
+}

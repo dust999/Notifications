@@ -33,6 +33,12 @@ Run the app
 start.bat
 ````
 
+📁 Your data
+---
+Everything personal lives in the `user_data/` folder: your reminders, settings and (later) Google credentials.
+Git keeps the folder but ignores everything inside it, so your data never ends up in the repository.
+On the first run the folder is filled with the demo data from `sample_data/`.
+
 🐍 Debug mode (optional)
 ---
 If you’d like to run the app directly for debugging:

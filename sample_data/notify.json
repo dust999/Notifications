@@ -1,0 +1,68 @@
+[
+    {
+        "id": "sample-water",
+        "text": "Drink a glass of water",
+        "time": "11:00",
+        "icon": "icons/health.png",
+        "recurrence_type": "daily",
+        "recurring": true
+    },
+    {
+        "id": "sample-standup",
+        "text": "Team call",
+        "time": "10:30",
+        "icon": "icons/work.png",
+        "recurrence_type": "weekly",
+        "weekly_days": [
+            0,
+            2,
+            4
+        ],
+        "recurring": true
+    },
+    {
+        "id": "sample-lunch",
+        "text": "Lunch break",
+        "time": "13:00",
+        "icon": "icons/home.png",
+        "recurrence_type": "weekly",
+        "weekly_days": [
+            0,
+            1,
+            2,
+            3,
+            4
+        ],
+        "recurring": true
+    },
+    {
+        "id": "sample-groceries",
+        "text": "Buy groceries",
+        "time": "18:00",
+        "icon": "icons/shopping.png",
+        "recurrence_type": "weekly",
+        "weekly_days": [
+            5
+        ],
+        "recurring": true
+    },
+    {
+        "id": "sample-bills",
+        "text": "Pay the bills",
+        "time": "09:00",
+        "icon": "icons/home.png",
+        "recurrence_type": "monthly",
+        "monthly_day": 10,
+        "recurring": true
+    },
+    {
+        "id": "sample-domain",
+        "text": "Renew the website domain",
+        "time": "09:00",
+        "icon": "icons/work.png",
+        "recurrence_type": "yearly",
+        "yearly_month": 3,
+        "yearly_day": 1,
+        "recurring": true
+    }
+]

@@ -1,16 +1,15 @@
-import winreg
-import sys
 import os
-import datetime
 from PyQt6 import QtWidgets, QtGui
+import autostart
+from utils import save_json
 
 class SettingsDialog(QtWidgets.QDialog):
-    def __init__(self, config_static, config_dynamic, parent, toggle_auto_run_callback, icon_path=None):
+    def __init__(self, config_static, config_dynamic, parent, data_manager=None, icon_path=None):
         super().__init__(parent)
         self.config_static = config_static
         self.config_dynamic = config_dynamic
         self.parent = parent
-        self.toggle_auto_run_callback = toggle_auto_run_callback
+        self.data_manager = data_manager
         self.setWindowTitle(self.config_static["settings_dialog"]["window_title"])
 
         # Set window icon if provided
@@ -107,8 +106,8 @@ class SettingsDialog(QtWidgets.QDialog):
 
         # Auto-start checkbox
         self.auto_run_checkbox = QtWidgets.QCheckBox(self.config_static["settings_dialog"]["autostart_label"])
-        self.auto_run_checkbox.setChecked(self.is_auto_start_enabled())
-        self.auto_run_checkbox.stateChanged.connect(self.toggle_auto_run)
+        # Applied in accept(), so Cancel really cancels
+        self.auto_run_checkbox.setChecked(autostart.is_enabled())
         layout.addWidget(self.auto_run_checkbox)
 
         # Spacing
@@ -144,65 +143,6 @@ class SettingsDialog(QtWidgets.QDialog):
         self.setLayout(layout)
         self.setFixedSize(self.sizeHint())
 
-    def is_auto_start_enabled(self):
-        """Check if auto-start is currently enabled in Windows registry"""
-        try:
-            key = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_READ) as reg_key:
-                value, _ = winreg.QueryValueEx(reg_key, "NotifyApp")
-                return bool(value)
-        except:
-            return False
-
-    def enable_autostart(self, exe_path):
-        """Enable autostart in Windows registry"""
-        try:
-            bat_path = os.path.join(os.path.dirname(exe_path), "start.bat")
-            full_path = f'"{bat_path}"'
-            key = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as reg:
-                winreg.SetValueEx(reg, "NotifyApp", 0, winreg.REG_SZ, full_path)
-        except Exception as e:
-            pass
-
-    def disable_autostart(self):
-        """Disable autostart in Windows registry"""
-        try:
-            key = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as reg:
-                winreg.DeleteValue(reg, "NotifyApp")
-        except Exception as e:
-            pass
-
-    def toggle_auto_run(self, state):
-        """Toggle auto-start functionality"""
-        enabled = bool(state)
-        exe_path = os.path.realpath(sys.argv[0])
-
-        try:
-            if enabled:
-                self.enable_autostart(exe_path)
-            else:
-                self.disable_autostart()
-
-            # Update config
-            self.config_dynamic["settings_dialog"]["autostart"] = enabled
-            # Call the callback if provided
-            if self.toggle_auto_run_callback:
-                self.toggle_auto_run_callback(enabled)
-        except:
-            # If setting failed, revert checkbox state
-            self.auto_run_checkbox.blockSignals(True)
-            self.auto_run_checkbox.setChecked(not enabled)
-            self.auto_run_checkbox.blockSignals(False)
-
-            # Show error message
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Error",
-                "Failed to change autostart settings. Please check your access rights."
-            )
-
     def get_config_data(self):
         """Get updated configuration data"""
         self.config_dynamic["settings_dialog"]["reminder_check_interval_sec"] = self.interval_spinbox.value()
@@ -210,6 +150,15 @@ class SettingsDialog(QtWidgets.QDialog):
         return self.config_dynamic
 
     def accept(self):
+        try:
+            autostart.set_enabled(self.auto_run_checkbox.isChecked())
+        except OSError:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Error",
+                "Failed to change autostart settings. Please check your access rights."
+            )
+            return
         self.save_position()
         super().accept()
 
@@ -237,8 +186,7 @@ class SettingsDialog(QtWidgets.QDialog):
             "width": size.width(),
             "height": size.height()
         }
-        from utils import save_json
-        save_json("config_dynamic.json", self.config_dynamic)
+        save_json(self.config_static["paths"]["config_dynamic_path"], self.config_dynamic)
 
     def closeEvent(self, event):
         self.save_position()
@@ -252,7 +200,10 @@ class SettingsDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
         )
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            import json
-            with open(self.config_static["paths"]["backlog_path"], "w", encoding="utf-8") as f:
-                json.dump([], f, indent=4, ensure_ascii=False)
+            # Go through the data manager: it keeps the backlog cached in memory and
+            # would write the old list back on the next save if only the file were cleared.
+            if self.data_manager:
+                self.data_manager.update_backlog([])
+            else:
+                save_json(self.config_static["paths"]["backlog_path"], [])
             QtWidgets.QMessageBox.information(self, "Backlog Cleared", "Backlog has been cleared.")

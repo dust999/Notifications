@@ -74,7 +74,8 @@ class ReminderChecker:
                     return False
             except Exception:
                 return False
-        if now.day < monthly_day:
+        # Day 31 in a 30-day month (or 29-31 in February) means the last day of that month
+        if now.day < ReminderChecker.get_effective_day_of_month(now.year, now.month, monthly_day):
             return False
         return (now.hour, now.minute) >= (hour, minute)
 

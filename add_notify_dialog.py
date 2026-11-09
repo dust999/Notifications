@@ -413,8 +413,8 @@ class AddNotifyDialog(QtWidgets.QDialog):
                     data["weekly_days"] = [idx for idx, btn in self.day_buttons.items() if btn.isChecked()]
                     data["recurring"] = True
                 elif rec_type == "Monthly":
-                    max_days = calendar.monthrange(now.year, now.month)[1] if now.month != 2 else 29  # Always 29 for February
-                    data["monthly_day"] = min(self.monthly_day_input.value(), max_days)
+                    # Keep the chosen day as is; the checker moves 29-31 to the last day of short months
+                    data["monthly_day"] = self.monthly_day_input.value()
                     data["recurring"] = True
                 elif rec_type == "Yearly":
                     data["yearly_month"] = self.yearly_month_input.currentIndex() + 1
@@ -454,7 +454,7 @@ class AddNotifyDialog(QtWidgets.QDialog):
             "width": size.width(),
             "height": size.height()
         }
-        save_json("config_dynamic.json", self.config_dynamic)
+        save_json(self.config_static["paths"]["config_dynamic_path"], self.config_dynamic)
 
     def closeEvent(self, event):
         self.save_position()

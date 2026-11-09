@@ -2,14 +2,14 @@ import sys
 import datetime
 import os
 from PyQt6 import QtWidgets, QtGui, QtCore
-from utils import load_json, save_json
+from utils import load_json, prepare_data_files
 from data_manager import DataManager
 from fullscreen_reminder import FullscreenReminder
 from add_notify_dialog import AddNotifyDialog
 from notify_list_dialog import NotifyListDialog
 from settings_dialog import SettingsDialog
 from reminder_check import ReminderChecker
-import winreg
+import autostart
 
 class NotifyApp(QtWidgets.QSystemTrayIcon):
     def __init__(self, app, config_static, config_dynamic, main_window):
@@ -18,7 +18,9 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.config_static = config_static
         self.config_dynamic = config_dynamic
         self.main_window = main_window
-        
+        # Fullscreen reminders currently on screen (see show_fullscreen_reminder)
+        self._popups = []
+
         # Initialize centralized data manager
         self.data_manager = DataManager(config_static)
         
@@ -133,7 +135,7 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         if self.notify_list_dialog is None or not self.notify_list_dialog.isVisible():
             self.notify_list_dialog = NotifyListDialog(
                 reminders, 
-                self.mark_reminder_done, 
+                self.delete_reminder,
                 self.edit_reminder, 
                 self.config_static, 
                 self.config_dynamic, 
@@ -183,7 +185,9 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
                     self.data_manager.add_reminder(reminder)
                     # Add to backlog when creating new notification (not when editing)
                     self.data_manager.add_to_backlog(reminder["text"])
-                
+
+                self._skip_if_already_due(reminder)
+
                 if self.notify_list_dialog and self.notify_list_dialog.isVisible():
                     # UI will update automatically via callback
                     pass
@@ -193,8 +197,22 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
     def edit_reminder(self, reminder):
         self.show_add_reminder_dialog(reminder)
 
+    def _skip_if_already_due(self, reminder):
+        """A recurring reminder saved after its time for today (or its day this month/year)
+        has passed would pop up right away. Count the current occurrence as done, so the
+        first one shown is the next one. A time equal to the current minute is left alone:
+        then the user wants it now."""
+        if reminder.get("recurrence_type") == "once":
+            return
+        now = datetime.datetime.now()
+        if reminder.get("time") == now.strftime("%H:%M"):
+            return
+        completed = self.data_manager.get_completed()
+        if self.should_show_reminder(reminder, now, set(), completed):
+            self.data_manager.add_completed_entry(reminder["id"])
+
     def show_settings_dialog(self):
-        dialog = SettingsDialog(self.config_static, self.config_dynamic, self.main_window, self.toggle_auto_run)
+        dialog = SettingsDialog(self.config_static, self.config_dynamic, self.main_window, self.data_manager)
         dialog.setWindowIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             self.config_dynamic = dialog.get_config_data()
@@ -203,34 +221,13 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
             self.setIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
             self.setToolTip(self.config_static["tray"]["tray_tooltip"])
 
-    def toggle_auto_run(self, enabled):
-        key = winreg.HKEY_CURRENT_USER
-        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        script_path = os.path.abspath(sys.argv[0])
-        try:
-            with winreg.OpenKey(key, key_path, 0, winreg.KEY_ALL_ACCESS) as reg_key:
-                if enabled:
-                    winreg.SetValueEx(reg_key, "ReminderApp", 0, winreg.REG_SZ, f'"{sys.executable}" "{script_path}"')
-                else:
-                    winreg.DeleteValue(reg_key, "ReminderApp")
-        except WindowsError:
-            if enabled:
-                with winreg.CreateKey(key, key_path) as reg_key:
-                    winreg.SetValueEx(reg_key, "ReminderApp", 0, winreg.REG_SZ, f'"{sys.executable}" "{script_path}"')
-
-    def mark_reminder_done(self, reminder):
-        """Manually mark a reminder as done (user clicked the done button)"""
+    def delete_reminder(self, reminder):
+        """Delete a reminder for good (user clicked the delete button and confirmed)"""
         if not self._validate_reminder(reminder):
             return
 
-        reminder_id = reminder["id"]
-        reminder_text = reminder["text"]
-
-        # Always remove the reminder when delete button is clicked
-        # 1. Add to backlog for history
-        self.data_manager.add_to_backlog(reminder_text)
-        # 2. Remove from notifications
-        self.data_manager.remove_reminder(reminder_id)
+        # remove_reminder also keeps the text in the backlog for suggestions
+        self.data_manager.remove_reminder(reminder["id"])
 
         if self.notify_list_dialog and self.notify_list_dialog.isVisible():
             # UI will update automatically via callback
@@ -297,9 +294,17 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
             return True
 
     def show_fullscreen_reminder(self, text, icon_path):
-        reminder = FullscreenReminder(text, icon_path, self.config_static)
-        reminder.setWindowIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
-        reminder.show()
+        popup = FullscreenReminder(text, icon_path, self.config_static)
+        popup.setWindowIcon(self._get_valid_icon(self.config_static["paths"]["tray_icon"]))
+        # Hold on to the window until the user closes it. A window nothing refers to
+        # gets collected by Python's garbage collector and vanishes on its own.
+        self._popups.append(popup)
+        popup.closed.connect(lambda p=popup: self._forget_popup(p))
+        popup.show()
+
+    def _forget_popup(self, popup):
+        if popup in self._popups:
+            self._popups.remove(popup)
 
     def exit_app(self):
         # Force save all changes before exit
@@ -309,15 +314,41 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.app.quit()
 
 if __name__ == "__main__":
+    # Config and data files are relative paths: always run from the app folder,
+    # whatever folder autostart or a shortcut launched us from.
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
+    # Only one copy may run: two copies show every reminder twice and overwrite each other's files.
+    instance_lock = QtCore.QLockFile(os.path.join(QtCore.QDir.tempPath(), "NotifyApp.lock"))
+    instance_lock.setStaleLockTime(0)
+    if not instance_lock.tryLock(100):
+        QtWidgets.QMessageBox.information(None, "Notify", "Notify is already running. Look for its icon in the tray.")
+        sys.exit(0)
+    app.aboutToQuit.connect(instance_lock.unlock)
+
+    autostart.repair()
+
     config_static = load_json("config_static.json", {})
-    config_dynamic = load_json("config_dynamic.json", {})
-    
+
     # Ensure config_static is a dictionary
     if not isinstance(config_static, dict):
         config_static = {}
+
+    # The user's own data lives in user_data/, which git keeps empty.
+    # Files from older versions are moved there; on a fresh copy of the app
+    # they are created from the demo data in sample_data/.
+    paths = config_static["paths"]
+    created_from_samples = prepare_data_files([
+        paths["notify_path"],
+        paths["backlog_path"],
+        paths["completed_path"],
+        paths["config_dynamic_path"],
+    ])
+
+    config_dynamic = load_json(paths["config_dynamic_path"], {})
 
     # Safely get tray icon path with fallback
     tray_icon_path = config_static.get("paths", {}).get("tray_icon", "icons/icon.png")
@@ -328,4 +359,8 @@ if __name__ == "__main__":
     main_window.hide()
 
     tray = NotifyApp(app, config_static, config_dynamic, main_window)
+    if paths["notify_path"] in created_from_samples:
+        # Otherwise every demo reminder whose time has passed today would pop up at once
+        for demo_reminder in tray.data_manager.get_reminders():
+            tray._skip_if_already_due(demo_reminder)
     sys.exit(app.exec())

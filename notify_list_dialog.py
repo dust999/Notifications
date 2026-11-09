@@ -6,11 +6,11 @@ from reminder_check import ReminderChecker
 
 
 class NotifyListDialog(QtWidgets.QDialog):
-    def __init__(self, reminders, mark_done_callback, edit_callback, config_static, config_dynamic, add_callback,
+    def __init__(self, reminders, delete_callback, edit_callback, config_static, config_dynamic, add_callback,
                  parent=None, data_manager=None):
         super().__init__(parent)
         self.reminders = reminders
-        self.mark_reminder_done_callback = mark_done_callback
+        self.delete_reminder_callback = delete_callback
         self.edit_reminder_callback = edit_callback
         self.add_reminder_callback = add_callback
         self.config_static = config_static
@@ -328,11 +328,11 @@ class NotifyListDialog(QtWidgets.QDialog):
                     self.config_static["paths"]["delete_icon"]):
                 done_btn.setIcon(QtGui.QIcon(self.config_static["paths"]["delete_icon"]))
             else:
-                done_btn.setText("✓")
+                done_btn.setText("✕")
             done_btn.setFixedSize(28, 28)
             done_btn.setObjectName(self.config_static["notify_list_dialog"].get("done_button_class", "done-button"))
             done_btn.setToolTip(self.tl_config["delete_tooltip"])
-            done_btn.clicked.connect(lambda _, r=reminder: self.mark_reminder_done(r))
+            done_btn.clicked.connect(lambda _, r=reminder: self.delete_reminder(r))
             button_layout.addWidget(done_btn)
 
             hbox.addLayout(button_layout)
@@ -370,8 +370,17 @@ class NotifyListDialog(QtWidgets.QDialog):
     def edit_reminder(self, reminder):
         self.edit_reminder_callback(reminder)
 
-    def mark_reminder_done(self, reminder):
-        self.mark_reminder_done_callback(reminder)
+    def delete_reminder(self, reminder):
+        """The button deletes the reminder for good (recurring ones too), so ask first."""
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Reminder",
+            f"Delete \"{reminder.get('text', '')}\"? This cannot be undone.",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No
+        )
+        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.delete_reminder_callback(reminder)
 
     def restore_position(self):
         """Restore window position from config"""
@@ -389,7 +398,7 @@ class NotifyListDialog(QtWidgets.QDialog):
             if self.data_manager:
                 self.data_manager.update_config_dynamic(self.config_dynamic)
             else:
-                save_json("config_dynamic.json", self.config_dynamic)
+                save_json(self.config_static["paths"]["config_dynamic_path"], self.config_dynamic)
         except Exception:
             pass
 
