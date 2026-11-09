@@ -165,11 +165,11 @@ def taskbar_is_light():
     return not system_prefers_dark()
 
 
-def tray_icon(paused=False):
+def tray_icon():
     """Outline bell like the system tray icons: white on a dark taskbar, dark on a light one.
     Follows the taskbar, not the app's theme, so it is always visible."""
     color = "#1c1c1c" if taskbar_is_light() else "#ffffff"
-    with open(os.path.join(ICON_DIR, "tray-paused.svg" if paused else "tray.svg"), encoding="utf-8") as f:
+    with open(os.path.join(ICON_DIR, "tray.svg"), encoding="utf-8") as f:
         source = f.read().replace("currentColor", color)
     result = QtGui.QIcon()
     for size in (16, 20, 24, 32, 40, 48):
@@ -184,9 +184,9 @@ def tray_icon(paused=False):
     return result
 
 
-def tile_icon(paused=False, palette=None):
+def tile_icon(palette=None):
     """Desktop and window icon: a white bell on a rounded square tile in the palette's color."""
-    top, bottom = ("#a3aab5", "#5f6672") if paused else PALETTES[palette or _palette][2]
+    top, bottom = PALETTES[palette or _palette][2]
     result = QtGui.QIcon()
     for size in (16, 20, 24, 32, 40, 48, 64, 256):
         pm = QtGui.QPixmap(size, size)
@@ -201,7 +201,7 @@ def tile_icon(paused=False, palette=None):
         inset = max(1, size // 16)
         p.drawRoundedRect(QtCore.QRectF(inset, inset, size - 2 * inset, size - 2 * inset), size * 0.24, size * 0.24)
         bell = round(size * (0.80 if size <= 20 else 0.68))
-        with open(os.path.join(ICON_DIR, "tray-paused.svg" if paused else "tray.svg"), encoding="utf-8") as f:
+        with open(os.path.join(ICON_DIR, "tray.svg"), encoding="utf-8") as f:
             svg = f.read().replace("currentColor", "#ffffff").replace(
                 'stroke-width="1.5"', f'stroke-width="{2.2 if size <= 20 else 2.0}"')
         QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode())).render(
@@ -278,6 +278,9 @@ def stylesheet():
     QPushButton[kind="icon"] {{ background: transparent; border: none; padding: 0; min-height: 0;
         border-radius: 6px; }}
     QPushButton[kind="icon"]:hover {{ background: {t['hover']}; }}
+    QPushButton[kind="tool"] {{ background: {t['chip']}; border: 1px solid {t['divider']}; padding: 0;
+        min-height: 0; border-radius: 10px; }}
+    QPushButton[kind="tool"]:hover {{ background: {t['hover']}; }}
     QPushButton[kind="chip"] {{ font-size: {S(13)}; font-weight: 500; min-height: {S(32)}; padding: 0 10px;
         border-radius: 6px; }}
     QPushButton[kind="chip"]:checked {{ border: 1px solid {t['accent']}; color: {t['accent']}; }}

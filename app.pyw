@@ -13,8 +13,6 @@ import autostart
 import schedule
 import theme
 
-PAUSE_MINUTES = 60
-
 
 class NotifyApp(QtWidgets.QSystemTrayIcon):
     def __init__(self, app, config_static, config_dynamic, main_window):
@@ -27,10 +25,6 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self._popups = []
         # The flyout is created when opened and deleted when closed (saves memory)
         self.flyout = None
-        self.paused_until = None
-        self._pause_timer = QtCore.QTimer(self)
-        self._pause_timer.setSingleShot(True)
-        self._pause_timer.timeout.connect(lambda: self.set_paused(False))
 
         # Initialize centralized data manager
         self.data_manager = DataManager(config_static)
@@ -64,21 +58,13 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
 
     def _update_tray_icon(self):
         # Outline bell colored for the taskbar's own light/dark setting, so it's always visible
-        self.setIcon(theme.tray_icon(paused=bool(self.paused_until)))
-        self.setToolTip(f"Notify — paused until {self.paused_until:%H:%M}" if self.paused_until else "Notify")
-        if hasattr(self, "pause_action"):
-            self.pause_action.blockSignals(True)
-            self.pause_action.setChecked(bool(self.paused_until))
-            self.pause_action.blockSignals(False)
+        self.setIcon(theme.tray_icon())
 
     def setup_tray_menu(self):
         self.menu = QtWidgets.QMenu()
         icon = lambda name: theme.icon(name, theme.c("text2"), 16)
         self.menu.addAction(icon("open-list"), "Open reminders", self.show_reminder_list)
         self.menu.addAction(icon("add"), "New reminder", lambda: self.open_editor(None))
-        self.pause_action = self.menu.addAction(icon("pause"), "Pause for 1 hour")
-        self.pause_action.setCheckable(True)
-        self.pause_action.toggled.connect(self.set_paused)
         self.menu.addAction(icon("settings"), "Settings", self.show_settings_dialog)
         self.menu.addSeparator()
         self.menu.addAction(icon("exit"), "Exit", self.exit_app)
@@ -127,25 +113,6 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
 
     def _on_data_changed(self, _data):
         if self.flyout is not None:
-            self.flyout.refresh()
-
-    # ---------- pause ----------
-
-    def is_paused(self):
-        return self.paused_until is not None
-
-    def set_paused(self, on):
-        if on:
-            self.paused_until = datetime.datetime.now() + datetime.timedelta(minutes=PAUSE_MINUTES)
-            self._pause_timer.start(PAUSE_MINUTES * 60 * 1000)
-        else:
-            self.paused_until = None
-            self._pause_timer.stop()
-        self._update_tray_icon()
-        if self.flyout is not None:
-            self.flyout.pause.blockSignals(True)
-            self.flyout.pause.setChecked(on)
-            self.flyout.pause.blockSignals(False)
             self.flyout.refresh()
 
     # ---------- editing ----------
@@ -232,8 +199,6 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
 
     def check_reminders(self):
         """Main reminder checking logic - called periodically"""
-        if self.paused_until is not None:
-            return
         now = datetime.datetime.now()
         completed = self.data_manager.get_completed()
         completed_map = {c.get("id"): c.get("completed_at") for c in completed}

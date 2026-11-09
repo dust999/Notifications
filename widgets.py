@@ -174,6 +174,9 @@ class IconButton(QtWidgets.QPushButton):
         super().__init__(parent)
         self.setProperty("kind", "icon")
         size, icon_size = theme.px(size), theme.px(icon_size)
+        # The stylesheet's min-height would undo setFixedSize, so the size is also
+        # reported as the size hint (layouts then keep the button square)
+        self._side = size
         self.setFixedSize(size, size)
         self.setIcon(theme.icon(icon_name, color or theme.c("text2"), icon_size))
         self.setIconSize(QtCore.QSize(icon_size, icon_size))
@@ -182,6 +185,12 @@ class IconButton(QtWidgets.QPushButton):
         self.setToolTip(tooltip)
         self.setAccessibleName(tooltip)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+
+    def sizeHint(self):
+        return QtCore.QSize(self._side, self._side)
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
 
 class CategoryBadge(QtWidgets.QWidget):
@@ -294,10 +303,11 @@ class NextUpGlow(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         # Elliptical glow stretched to the block and fully faded before any edge
-        g = QtGui.QRadialGradient(QtCore.QPointF(0.32, 0.5), 0.32)
+        # Small and faint: a hint of color behind the badge, not a spotlight
+        g = QtGui.QRadialGradient(QtCore.QPointF(0.2, 0.5), 0.2)
         g.setCoordinateMode(QtGui.QGradient.CoordinateMode.ObjectBoundingMode)
         col = theme.qcolor(theme.c("glow"))
-        col.setAlpha(40 if theme.is_dark() else 26)
+        col.setAlpha(22 if theme.is_dark() else 14)
         g.setColorAt(0, col)
         col.setAlpha(0)
         g.setColorAt(1, col)

@@ -8,7 +8,7 @@ from PyQt6 import QtCore, QtWidgets
 
 import schedule
 import theme
-from widgets import CategoryBadge, ElidedLabel, GlassWindow, IconButton, NextUpGlow, Toggle, confirm, divider, label
+from widgets import CategoryBadge, ElidedLabel, GlassWindow, IconButton, NextUpGlow, confirm, divider, label
 
 GROUPS = ["Today", "Tomorrow", "This week", "Later"]
 
@@ -76,20 +76,15 @@ class RemindersFlyout(GlassWindow):
         self.tab = 0
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 0)
+        root.setContentsMargins(20, 16, 20, 10)
         root.setSpacing(0)
 
-        brand = QtWidgets.QHBoxLayout()
-        brand.setSpacing(6)
-        mark = QtWidgets.QLabel()
-        mark.setPixmap(theme.pixmap("tray", theme.c("accent"), theme.px(16)))
-        brand.addWidget(mark)
-        brand.addWidget(label("Notify", "caption"))
-        brand.addStretch()
-        root.addLayout(brand)
-
         head = QtWidgets.QHBoxLayout()
-        head.addWidget(label("Reminders", "h1"))
+        head.setSpacing(theme.px(10))
+        mark = QtWidgets.QLabel()
+        mark.setPixmap(theme.pixmap("tray", theme.c("accent"), theme.px(28)))
+        head.addWidget(mark)
+        head.addWidget(label("Notify", "h1"))
         head.addStretch()
         new = QtWidgets.QPushButton(" New reminder")
         new.setProperty("kind", "primary")
@@ -98,6 +93,14 @@ class RemindersFlyout(GlassWindow):
         new.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         new.clicked.connect(lambda: self.app.open_editor(None))
         head.addWidget(new)
+        # Settings sits next to "New reminder": a square as tall as that button
+        settings = IconButton("settings", "Settings", 36, 20)
+        settings.setProperty("kind", "tool")
+        side = new.sizeHint().height()
+        settings._side = side
+        settings.setFixedSize(side, side)
+        settings.clicked.connect(self.app.show_settings_dialog)
+        head.addWidget(settings)
         root.addSpacing(4)
         root.addLayout(head)
         root.addSpacing(14)
@@ -153,26 +156,8 @@ class RemindersFlyout(GlassWindow):
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # The list runs to the bottom of the window; no footer
         root.addWidget(self.scroll, 1)
-
-        root.addWidget(divider())
-        foot = QtWidgets.QHBoxLayout()
-        foot.setContentsMargins(0, theme.px(12), 0, theme.px(14))
-        # Bigger hit box than the icon: the gear doesn't touch the button's edges
-        settings = IconButton("settings", "Settings", 42, 22)
-        settings.clicked.connect(self.app.show_settings_dialog)
-        foot.addWidget(settings)
-        foot.addStretch()
-        self.pause_label = label("Pause reminders", "meta")
-        foot.addWidget(self.pause_label)
-        foot.addSpacing(8)
-        self.pause = Toggle()
-        self.pause.setAccessibleName("Pause reminders for 1 hour")
-        self.pause.setToolTip("Pause reminders for 1 hour")
-        self.pause.setChecked(self.app.is_paused())
-        self.pause.toggled.connect(self._toggle_pause)
-        foot.addWidget(self.pause)
-        root.addLayout(foot)
 
         # Countdown text only changes once a minute; refresh while open
         self.ticker = QtCore.QTimer(self)
@@ -208,7 +193,6 @@ class RemindersFlyout(GlassWindow):
         upcoming, done = self._entries(now)
         self.counts[0].setText(str(len(upcoming)))
         self.counts[1].setText(str(len(done)))
-        self._update_pause_label()
 
         if upcoming:
             occ, r = upcoming[0]
@@ -282,14 +266,6 @@ class RemindersFlyout(GlassWindow):
         if confirm(self, "Delete reminder?", f"“{text}” will be removed, including future repeats.",
                    "Delete reminder"):
             self.app.delete_reminder(reminder)
-
-    def _toggle_pause(self, on):
-        self.app.set_paused(on)
-        self._update_pause_label()
-
-    def _update_pause_label(self):
-        until = self.app.paused_until
-        self.pause_label.setText(f"Paused until {until:%H:%M}" if until else "Pause reminders")
 
     # ----- placement and closing -----
 
