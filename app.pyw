@@ -216,6 +216,8 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
             self.config_dynamic = dialog.get_config_data()
             self.data_manager.update_config_dynamic(self.config_dynamic)
             self.timer.setInterval(self.config_dynamic["settings_dialog"]["reminder_check_interval_sec"] * 1000)
+            schedule.set_week_start(week_start_day(self.config_dynamic["settings_dialog"].get("week_start", "system")))
+            self.rebuild_calendar()  # its grids and the editor's weekday chips follow the new week start
 
     def delete_reminder(self, reminder):
         """Delete a reminder for good (user clicked the delete button and confirmed)"""
@@ -258,13 +260,17 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         for reminder in self.data_manager.get_reminders():
             if not self._validate_reminder(reminder):
                 continue
-            early = schedule.early_occurrence(reminder, now, completed_map.get(f"{reminder['id']}:early"))
-            if early is not None:
-                lead = schedule.lead_label(reminder["remind_before_days"])
+            # Heads-ups (1 month, 2 weeks... before): each chosen one fires once. The reminder
+            # itself still fires on its day below. If several are due at once (the app was off),
+            # only the closest is shown and all of them count as shown.
+            due = schedule.due_heads_ups(reminder, now, completed_map)
+            if due:
+                days, early = min(due)
                 self.show_fullscreen_reminder(
-                    reminder, early, f"Coming up in {lead}: "
+                    reminder, early, f"Coming up in {schedule.lead_label(days)}: "
                                      f"{schedule.WEEKDAYS[early.weekday()]}, {schedule.MONTHS[early.month - 1]} {early.day}")
-                self.data_manager.add_completed_entry(f"{reminder['id']}:early")
+                for d, _occ in due:
+                    self.data_manager.add_completed_entry(f"{reminder['id']}:early:{d}")
             if self.should_show_reminder(reminder, now, set(), completed):
                 occ = schedule.next_occurrence(reminder, now, completed_map.get(reminder["id"]))
                 self.show_fullscreen_reminder(reminder, occ)
@@ -314,9 +320,32 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.app.quit()
 
 
+def watch_quit_request(app, tray):
+    """tools/restart.py asks a running copy to save and exit by touching this file (to restart
+    after an update). A file watcher is plain QtCore: no extra module, nothing polled."""
+    folder = os.path.join(QtCore.QDir.tempPath(), "NotifyApp")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "quit")
+    with open(path, "w", encoding="utf-8"):
+        pass
+    watcher = QtCore.QFileSystemWatcher([path], app)
+    watcher.fileChanged.connect(lambda _path: tray.exit_app())
+    return watcher
+
+
+def week_start_day(choice):
+    """'monday' / 'sunday', or 'system': Windows' regional "First day of week" setting."""
+    if choice == "monday":
+        return 0
+    if choice == "sunday":
+        return 6
+    return QtCore.QLocale.system().firstDayOfWeek().value - 1  # Qt: Monday = 1 ... Sunday = 7
+
+
 def apply_theme(app, config_dynamic):
     settings = config_dynamic.get("settings_dialog", {})
     theme.set_mode(settings.get("theme", "system"), settings.get("palette"), settings.get("text_size"))
+    schedule.set_week_start(week_start_day(settings.get("week_start", "system")))
     app.setFont(theme.font(13))
     app.setStyleSheet(theme.stylesheet())
     app.setWindowIcon(theme.tile_icon())
@@ -326,6 +355,12 @@ if __name__ == "__main__":
     # Config and data files are relative paths: always run from the app folder,
     # whatever folder autostart or a shortcut launched us from.
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+    # Our own taskbar identity: without it Windows groups our windows under pythonw.exe
+    # and shows the Python logo instead of the app icon.
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Notify.App")
 
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -368,4 +403,5 @@ if __name__ == "__main__":
         # Otherwise every demo reminder whose time has passed today would pop up at once
         for demo_reminder in tray.data_manager.get_reminders():
             tray._skip_if_already_due(demo_reminder)
+    quit_watcher = watch_quit_request(app, tray)
     sys.exit(app.exec())

@@ -7,6 +7,7 @@ from widgets import GlassDialog, IconButton, Segmented, Toggle, confirm, divider
 
 THEMES = ["system", "dark", "light"]
 SIZES = ["normal", "large", "larger"]
+WEEKS = ["system", "monday", "sunday"]
 
 
 def _index(options, value, default):
@@ -30,6 +31,7 @@ class SettingsDialog(GlassDialog):
             # Only one color scheme is left; an old saved "steel" becomes the default
             "palette": settings.get("palette") if settings.get("palette") in theme.PALETTES else theme.DEFAULT_PALETTE,
             "text_size": settings.get("text_size", theme.DEFAULT_SIZE),
+            "week_start": settings.get("week_start", "system"),
             "autostart": autostart.is_enabled(),
             "interval": settings.get("reminder_check_interval_sec", 10),
         }
@@ -56,6 +58,7 @@ class SettingsDialog(GlassDialog):
         head.addWidget(label("Settings", "h2"))
         head.addStretch()
         close = IconButton("close", "Close", 32, 18)
+        close.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)  # it took the first focus and showed a frame; Esc closes too
         close.clicked.connect(self.reject)
         head.addWidget(close)
         root.addLayout(head)
@@ -66,6 +69,14 @@ class SettingsDialog(GlassDialog):
         self.size_choice = self._segmented(root, "Text size", ["Normal", "Large", "Larger"],
                                            _index(SIZES, self.pending["text_size"], theme.DEFAULT_SIZE),
                                            "text_size", SIZES)
+
+        # Calendars: Monday or Sunday first; "System" follows Windows' regional settings
+        root.addWidget(label("Week starts on", "field"))
+        self.week_choice = Segmented(["System", "Monday", "Sunday"])
+        self.week_choice.set_index(_index(WEEKS, self.pending["week_start"], "system"))
+        self.week_choice.changed.connect(lambda i: self.pending.__setitem__("week_start", WEEKS[i]))
+        root.addWidget(self.week_choice)
+        root.addSpacing(theme.px(10))
 
         row = QtWidgets.QHBoxLayout()
         row.addWidget(label("Start with Windows", "field"))
@@ -143,6 +154,7 @@ class SettingsDialog(GlassDialog):
         settings["theme"] = self.pending["theme"]
         settings["palette"] = self.pending["palette"]
         settings["text_size"] = self.pending["text_size"]
+        settings["week_start"] = self.pending["week_start"]
         return self.config_dynamic
 
     def accept(self):

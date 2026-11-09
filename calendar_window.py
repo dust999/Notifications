@@ -49,12 +49,14 @@ def _cat_colors(reminder):
     return theme.qcolor(symbol), theme.qcolor(tint)
 
 
-def _dot_color(items):
-    """Year view dot: a chosen color wins over category colors (bills red, payday green)."""
-    for _occ, r in items:
-        if theme.reminder_color(r.get("color")) is not None:
-            return _cat_colors(r)[0], True
-    return _cat_colors(items[0][1])[0], False
+def _day_colors(items):
+    """Colors for a day's bar in Year view: one per chosen color present (always in the same
+    order: red, yellow, green, ...), plus one grey part if some reminders have no color."""
+    chosen = {r.get("color") for _occ, r in items if theme.reminder_color(r.get("color")) is not None}
+    colors = [theme.reminder_color(key) for key, *_ in theme.REMINDER_COLORS if key in chosen]
+    if any(theme.reminder_color(r.get("color")) is None for _occ, r in items):
+        colors.append(_col("muted"))
+    return colors
 
 
 def _darken_overlay():
@@ -148,6 +150,14 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
                 now = datetime.datetime.now()
                 hour = max(7, now.hour - 3) if date == now.date() else 7
                 sb.setValue(round(self._day_top() + hour * self._hour_h()) - theme.px(4))
+            elif view == "year":
+                # The whole year may not fit: make sure the shown month (today's, from Today) is visible
+                L = self._year_layout()
+                row = (date.month - 1) // L["cols"]
+                top = L["margin"] + row * (L["mini_h"] + L["gap_y"])
+                bottom = top + L["mini_h"]
+                vh = self.viewport().height()
+                sb.setValue(0 if bottom <= vh else round(min(top, bottom - vh + L["margin"])))
             else:
                 sb.setValue(0)
         self.viewport().update()
@@ -194,11 +204,11 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
         w, h = self.viewport().width(), self.viewport().height()
         head = px(28)
         first = self.date.replace(day=1)
-        start = first - datetime.timedelta(days=first.weekday())
+        start = schedule.week_start_of(first)
         days = self.occurrences(start, start + datetime.timedelta(days=41), specific_only=True)
         col_w, row_h = w / 7, (h - head) / 6
-        for i, name in enumerate(DAY_NAMES):
-            self._text(p, QtCore.QRectF(i * col_w + px(8), 0, col_w - px(8), head), name[:3], 12, 500, "muted")
+        for i, wd in enumerate(schedule.week_order()):
+            self._text(p, QtCore.QRectF(i * col_w + px(8), 0, col_w - px(8), head), DAY_NAMES[wd][:3], 12, 500, "muted")
         line_h = px(20)
         for idx in range(42):
             d = start + datetime.timedelta(days=idx)
@@ -367,15 +377,16 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
     # Year: 12 small months; dots on days with date-specific reminders (birthdays, bills)
 
     def _year_layout(self):
+        """Compact: the whole year fits without scrolling (design/year-variants.html, variant B)."""
         px = theme.px
         w, vh = self.viewport().width(), self.viewport().height()
         cols = 4 if w > px(880) else 3
         rows = 12 // cols
-        gap_x, gap_y, margin = px(28), px(18), px(4)
+        gap_x, gap_y, margin = px(24), px(10), px(4)
         mini_w = (w - 2 * margin - gap_x * (cols - 1)) / cols
-        head_h, week_h = px(28), px(22)
+        head_h, week_h = px(24), px(18)
         fit = (vh - 2 * margin - gap_y * (rows - 1)) / rows
-        row_h = min(max((fit - head_h - week_h) / 6, px(22)), px(34))
+        row_h = min(max((fit - head_h - week_h) / 6, px(20)), px(26))
         mini_h = head_h + week_h + 6 * row_h
         return {"cols": cols, "gap_x": gap_x, "gap_y": gap_y, "margin": margin, "mini_w": mini_w,
                 "head_h": head_h, "week_h": week_h, "row_h": row_h, "mini_h": mini_h,
@@ -388,6 +399,8 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
         days = self.occurrences(datetime.date(year, 1, 1), datetime.date(year, 12, 31), specific_only=True)
         off = self.verticalScrollBar().value()
         cell_w = L["mini_w"] / 7
+        dark = theme.is_dark()
+        accent = _col("accent")
         for m in range(1, 13):
             row, col = divmod(m - 1, L["cols"])
             x = L["margin"] + col * (L["mini_w"] + L["gap_x"])
@@ -400,33 +413,45 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
             fm = QtGui.QFontMetrics(theme.font(15, 650))
             self._hits.append((QtCore.QRectF(head.x(), head.y(), fm.horizontalAdvance(MONTH_NAMES[m - 1]) + px(8),
                                              head.height()), "month", datetime.date(year, m, 1)))
-            for i, name in enumerate(DAY_NAMES):
-                self._text(p, QtCore.QRectF(x + i * cell_w, y + L["head_h"], cell_w, L["week_h"]), name[0], 12, 500,
+            for i, wd in enumerate(schedule.week_order()):
+                self._text(p, QtCore.QRectF(x + i * cell_w, y + L["head_h"], cell_w, L["week_h"]), DAY_NAMES[wd][0], 12, 500,
                            "muted", QtCore.Qt.AlignmentFlag.AlignCenter, False)
-            first_wd = datetime.date(year, m, 1).weekday()
+            first_wd = schedule.column_of(datetime.date(year, m, 1))
             for day in range(1, calendar.monthrange(year, m)[1] + 1):
                 d = datetime.date(year, m, day)
                 r, c = divmod(first_wd + day - 1, 7)
                 cell = QtCore.QRectF(x + c * cell_w, y + L["head_h"] + L["week_h"] + r * L["row_h"], cell_w, L["row_h"])
-                # Number sits a little above center, leaving room for the dot under it
-                num = cell.adjusted(0, 0, 0, -px(5))
-                side = min(cell_w, L["row_h"]) - px(4)
-                circle = QtCore.QRectF(num.center().x() - side / 2, num.center().y() - side / 2, side, side)
-                if d == self._today or d == self._hover:
-                    p.setPen(QtCore.Qt.PenStyle.NoPen)
-                    p.setBrush(_col("accent") if d == self._today else _col("hover", 0.14 if theme.is_dark() else 0.12))
-                    p.drawEllipse(circle)
-                today = d == self._today
-                self._text(p, num, str(day), 12, 700 if today else 400, "on_accent" if today else "text",
+                # One pill per day holds the number and its color line: hover and today outline both
+                pw = min(cell_w - px(4), px(28))
+                pill = QtCore.QRectF(cell.center().x() - pw / 2, cell.y() + px(0.5), pw, cell.height() - px(1))
+                num = QtCore.QRectF(pill.x(), pill.y(), pill.width(), pill.height() - px(7))
+                today, hovered = d == self._today, d == self._hover
+                if today or hovered:
+                    if today:
+                        fill = QtGui.QColor(accent)
+                        fill.setAlphaF((0.13 if dark else 0.09) + (0.06 if hovered else 0))
+                        pen = QtGui.QPen(accent, 1)
+                    else:
+                        fill = _col("hover", 0.10) if dark else QtGui.QColor(47, 95, 207, 18)
+                        pen = QtGui.QPen(QtGui.QColor(214, 226, 255, 51) if dark else QtGui.QColor(47, 95, 207, 77), 1)
+                    p.setPen(pen)
+                    p.setBrush(fill)
+                    p.drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), px(7), px(7))
+                self._text(p, num, str(day), 12, 700 if today else 400, "accent" if today else "text",
                            QtCore.Qt.AlignmentFlag.AlignCenter, False)
                 items = days.get(d)
                 if items:
-                    color, chosen = _dot_color(items)
+                    # Thin line right under the number, split by color: payday green + a red bill
+                    # on one day show as half green, half red
+                    colors = _day_colors(items)
+                    gap = px(1.5) if len(colors) > 1 else 0
+                    bar_w = min(px(14) + px(4) * (len(colors) - 1), pill.width() - px(6))
+                    part = (bar_w - gap * (len(colors) - 1)) / len(colors)
+                    x0, y0 = pill.center().x() - bar_w / 2, num.bottom() + px(0.5)
                     p.setPen(QtCore.Qt.PenStyle.NoPen)
-                    p.setBrush(color)
-                    radius = px(3.2) if chosen else px(2.5)
-                    p.drawEllipse(QtCore.QPointF(cell.center().x(), max(circle.bottom(), num.bottom() - px(2)) + px(3)),
-                                  radius, radius)
+                    for i, color in enumerate(colors):
+                        p.setBrush(color)
+                        p.drawRoundedRect(QtCore.QRectF(x0 + i * (part + gap), y0, part, px(2)), 1, 1)
                 self._hits.append((cell, "day", d))
 
     def _year_tooltip(self, d):

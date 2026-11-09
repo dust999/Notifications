@@ -10,7 +10,6 @@ import theme
 from widgets import ColorSwatch, DatePopup, GlassDialog, IconButton, Segmented, divider, label
 
 REPEATS = ["once", "daily", "weekly", "monthly", "yearly"]
-EARLIER = [0] + schedule.LEAD_DAYS
 CATEGORY_ICONS = {"work": "icons/work.png", "personal": "icons/home.png",
                   "health": "icons/health.png", "shopping": "icons/shopping.png", "none": ""}
 
@@ -78,11 +77,15 @@ class ReminderEditor(GlassDialog):
         for i, name in enumerate(schedule.WEEKDAYS):
             b = QtWidgets.QPushButton(name)
             b.setProperty("kind", "chip")
+            # Focus only from the keyboard: a clicked chip kept the focus border, which looks
+            # exactly like "selected", so a chip switched off still seemed on
+            b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
             b.setCheckable(True)
             b.setAccessibleName(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i])
             b.toggled.connect(self._update_preview)
             self.day_buttons.append(b)
-            days_lay.addWidget(b)
+        for i in schedule.week_order():  # shown from the first day of the week (Monday or Sunday)
+            days_lay.addWidget(self.day_buttons[i])
         self.month_day = QtWidgets.QSpinBox()
         self.month_day.setRange(1, 31)
         self.month_day.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
@@ -123,6 +126,9 @@ class ReminderEditor(GlassDialog):
         for i, cat in enumerate(schedule.CATEGORIES):
             b = QtWidgets.QPushButton(schedule.CATEGORY_NAMES[cat])
             b.setProperty("kind", "chip")
+            # Focus only from the keyboard: a clicked chip kept the focus border, which looks
+            # exactly like "selected", so a chip switched off still seemed on
+            b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
             b.setCheckable(True)
             if cat != "none":
                 b.setIcon(theme.icon(f"cat-{cat}", theme.c("cat")[cat][0], theme.px(16)))
@@ -150,9 +156,28 @@ class ReminderEditor(GlassDialog):
         eb = QtWidgets.QVBoxLayout(self.earlier_box)
         eb.setContentsMargins(0, 6, 0, 0)
         eb.setSpacing(6)
-        eb.addWidget(label("Remind me earlier", "field"))
-        self.earlier = Segmented(["Off"] + [schedule.lead_label(d) for d in schedule.LEAD_DAYS])
-        eb.addWidget(self.earlier)
+        head = QtWidgets.QHBoxLayout()
+        head.addWidget(label("Remind me earlier", "field"))
+        head.addWidget(label("pick any, plus the day itself", "meta"))
+        head.addStretch()
+        eb.addLayout(head)
+        # Independent chips: every one switched on sends its own heads-up
+        leads = QtWidgets.QHBoxLayout()
+        leads.setSpacing(4)
+        self.lead_buttons = {}
+        for days in schedule.LEAD_DAYS:
+            b = QtWidgets.QPushButton(schedule.lead_label(days))
+            b.setProperty("kind", "chip")
+            # Focus only from the keyboard: a clicked chip kept the focus border, which looks
+            # exactly like "selected", so a chip switched off still seemed on
+            b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
+            b.setCheckable(True)
+            b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            b.toggled.connect(self._update_preview)
+            self.lead_buttons[days] = b
+            leads.addWidget(b)
+        leads.addStretch()
+        eb.addLayout(leads)
         root.addWidget(self.earlier_box)
 
         root.addSpacing(10)
@@ -163,6 +188,7 @@ class ReminderEditor(GlassDialog):
         clock.setPixmap(theme.pixmap("clock", theme.c("text2"), theme.px(16)))
         prev.addWidget(clock)
         self.preview = label("", "meta")
+        self.preview.setWordWrap(True)  # several heads-ups make a long line
         prev.addWidget(self.preview, 1)
         root.addLayout(prev)
 
@@ -182,7 +208,7 @@ class ReminderEditor(GlassDialog):
         self._load(reminder)
         for signal in (self.repeat.changed, self.time.timeChanged, self.date.dateChanged,
                        self.month_day.valueChanged, self.year_month.currentIndexChanged,
-                       self.year_day.valueChanged, self.earlier.changed):
+                       self.year_day.valueChanged):
             signal.connect(self._update_preview)
         self.repeat.changed.connect(self._show_details)
         self._show_details()
@@ -211,8 +237,9 @@ class ReminderEditor(GlassDialog):
         self.cat_group.button(schedule.CATEGORIES.index(schedule.category_of(r))).setChecked(True)
         color = r.get("color")
         self.color_group.button(self.color_names.index(color) if color in self.color_names else 0).setChecked(True)
-        before = r.get("remind_before_days", 0)
-        self.earlier.set_index(EARLIER.index(before) if before in EARLIER else 0)
+        for days in schedule.leads_of(r):
+            if days in self.lead_buttons:
+                self.lead_buttons[days].setChecked(True)
 
     def get_data(self):
         kind = REPEATS[self.repeat.index()]
@@ -235,8 +262,9 @@ class ReminderEditor(GlassDialog):
         elif kind == "yearly":
             data["yearly_month"] = self.year_month.currentIndex() + 1
             data["yearly_day"] = self.year_day.value()
-        if kind in ("once", "monthly", "yearly") and self.earlier.index() > 0:
-            data["remind_before_days"] = EARLIER[self.earlier.index()]
+        leads = [d for d, b in sorted(self.lead_buttons.items(), reverse=True) if b.isChecked()]
+        if kind in ("once", "monthly", "yearly") and leads:
+            data["remind_before_days"] = leads
         color = self.color_names[max(self.color_group.checkedId(), 0)]
         if color:
             data["color"] = color
@@ -304,14 +332,15 @@ class ReminderEditor(GlassDialog):
         data = self.get_data()
         data.pop("remind_before_days", None)
         allowed = schedule.lead_choices(data, datetime.datetime.now())
-        for i, days in enumerate(EARLIER):
-            button = self.earlier.group.button(i)
-            button.setVisible(i == 0 or days in allowed)
-        if EARLIER[max(self.earlier.index(), 0)] not in [0] + allowed:
-            self.earlier.group.button(0).setChecked(True)  # chosen option no longer fits: back to Off
+        for days, button in self.lead_buttons.items():
+            button.setVisible(days in allowed)
+            if days not in allowed and button.isChecked():
+                button.blockSignals(True)
+                button.setChecked(False)  # no longer fits (e.g. "1 month" for a monthly reminder)
+                button.blockSignals(False)
         if self.earlier_box.isHidden() == bool(allowed):
             self.earlier_box.setVisible(bool(allowed))
-            QtCore.QTimer.singleShot(0, self.adjustSize)
+            self._fit_later()
 
     def _update_preview(self):
         self._update_earlier()
@@ -320,10 +349,22 @@ class ReminderEditor(GlassDialog):
             self.preview.setText("Choose at least one day")
             return
         text = schedule.preview(data, datetime.datetime.now())
-        days = data.get("remind_before_days")
-        if days:
-            text += f", plus a heads-up {schedule.lead_label(days)} before"
+        leads = schedule.leads_of(data)
+        if leads:
+            text += f", plus {'a heads-up' if len(leads) == 1 else 'heads-ups'} {schedule.leads_text(leads)} before"
         self.preview.setText(text)
+        self._fit_later()
+
+    def _fit_later(self):
+        """Grow or shrink to the content once the layout has settled. Without this a preview
+        that wraps to a second line squeezed the rows above it (the heads-up chips)."""
+        QtCore.QTimer.singleShot(0, self._fit)
+
+    def _fit(self):
+        layout = self.layout()
+        need = layout.totalHeightForWidth(self.width()) if layout.hasHeightForWidth() else layout.totalSizeHint().height()
+        if need > 0 and need != self.height():
+            self.resize(self.width(), need)
 
     def _set_error(self, text):
         self.error.setText(text)

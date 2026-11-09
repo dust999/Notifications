@@ -17,6 +17,35 @@ CATEGORY_NAMES = {"work": "Work", "personal": "Personal", "health": "Health",
 _ICON_TO_CATEGORY = {"work": "work", "home": "personal", "health": "health", "shopping": "shopping"}
 
 
+# First day of the week in calendars: 0 = Monday ... 6 = Sunday (Python's weekday numbers).
+# The app sets it from Windows' regional setting or the user's choice in Settings.
+_week_start = 0
+
+
+def set_week_start(day):
+    global _week_start
+    _week_start = day if day in range(7) else 0
+
+
+def week_start():
+    return _week_start
+
+
+def week_order():
+    """Weekday numbers in the order calendar columns show them, e.g. [6, 0, 1, 2, 3, 4, 5] from Sunday."""
+    return [(_week_start + i) % 7 for i in range(7)]
+
+
+def column_of(day):
+    """Column (0-6) of a date in a calendar row."""
+    return (day.weekday() - _week_start) % 7
+
+
+def week_start_of(day):
+    """The first day of the calendar week containing `day`."""
+    return day - datetime.timedelta(days=column_of(day))
+
+
 def category_of(reminder):
     cat = reminder.get("category")
     if cat in CATEGORIES:
@@ -139,10 +168,47 @@ def lead_choices(reminder, now):
     return []
 
 
-def early_occurrence(reminder, now, last_early=None):
-    """The occurrence a heads-up is due for right now, if any. `last_early` is when the previous
-    heads-up was shown (ISO string or datetime), so each occurrence gets at most one."""
-    days = reminder.get("remind_before_days")
+def leads_of(reminder):
+    """The reminder's heads-up lead times in days, longest first. Any number of them can be
+    chosen; files from older versions store a single number."""
+    value = reminder.get("remind_before_days")
+    values = value if isinstance(value, list) else [value]
+    leads = set()
+    for v in values:
+        try:
+            if int(v) > 0:
+                leads.add(int(v))
+        except (TypeError, ValueError):
+            pass
+    return sorted(leads, reverse=True)
+
+
+def leads_text(leads):
+    """'1 month, 2 weeks and 3 days' for the editor preview."""
+    labels = [lead_label(d) for d in sorted(leads, reverse=True)]
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+
+
+def due_heads_ups(reminder, now, completed_map):
+    """[(days, occurrence)] for every chosen heads-up that is due right now. Each lead time has
+    its own 'shown' mark, <id>:early:<days>, so each fires once per occurrence. Older versions
+    kept a single mark, <id>:early, used here when there is no newer one."""
+    rid = reminder.get("id")
+    legacy = completed_map.get(f"{rid}:early")
+    due = []
+    for days in leads_of(reminder):
+        occ = early_occurrence(reminder, now, completed_map.get(f"{rid}:early:{days}") or legacy, days)
+        if occ is not None:
+            due.append((days, occ))
+    return due
+
+
+def early_occurrence(reminder, now, last_early=None, days=None):
+    """The occurrence a heads-up `days` before is due for right now, if any (`days` defaults to the
+    reminder's longest lead). `last_early` is when that heads-up was last shown (ISO string or
+    datetime), so each occurrence gets at most one."""
+    if days is None:
+        days = (leads_of(reminder) or [None])[0]
     if not days or reminder.get("recurrence_type") not in ("once", "monthly", "yearly"):
         return None
     shift = datetime.timedelta(days=days)

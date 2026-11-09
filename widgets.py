@@ -3,6 +3,7 @@ import datetime
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+import schedule
 import theme
 
 
@@ -388,7 +389,7 @@ class _MonthGrid(QtWidgets.QWidget):
 
     def _cells(self):
         first = self.popup.month
-        start = first - datetime.timedelta(days=first.weekday())
+        start = schedule.week_start_of(first)
         cw, rh, head = self.width() / 7, theme.px(34), theme.px(24)
         for i in range(42):
             r, c = divmod(i, 7)
@@ -400,7 +401,7 @@ class _MonthGrid(QtWidgets.QWidget):
         cw = self.width() / 7
         p.setFont(theme.font(12, 500))
         p.setPen(theme.qcolor(theme.c("muted")))
-        for i, name in enumerate("MTWTFSS"):
+        for i, name in enumerate("MTWTFSS"[wd] for wd in schedule.week_order()):
             p.drawText(QtCore.QRectF(i * cw, 0, cw, theme.px(24)), int(QtCore.Qt.AlignmentFlag.AlignCenter), name)
         today = datetime.date.today()
         for d, rect in self._cells():

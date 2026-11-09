@@ -303,3 +303,63 @@ class HeadsUpTest(unittest.TestCase):
     def test_labels(self):
         self.assertEqual([schedule.lead_label(d) for d in schedule.LEAD_DAYS],
                          ["1 day", "3 days", "1 week", "2 weeks", "1 month"])
+
+
+class SeveralHeadsUpsTest(unittest.TestCase):
+    R = {"id": "b", "recurrence_type": "yearly", "time": "09:00", "yearly_month": 6, "yearly_day": 16,
+         "remind_before_days": [30, 14, 3]}
+
+    def test_each_fires_once_and_the_day_itself_too(self):
+        shown = {}
+        def due_at(when):
+            due = schedule.due_heads_ups(self.R, when, shown)
+            for days, _occ in due:
+                shown[f"b:early:{days}"] = when.isoformat()
+            return [d for d, _ in due]
+        self.assertEqual(due_at(at(2026, 5, 17, 9, 0)), [30])
+        self.assertEqual(due_at(at(2026, 5, 18, 9, 0)), [])
+        self.assertEqual(due_at(at(2026, 6, 2, 9, 0)), [14])
+        self.assertEqual(due_at(at(2026, 6, 13, 9, 0)), [3])
+        self.assertEqual(due_at(at(2026, 6, 15, 9, 0)), [])
+        # On the day the reminder itself fires, as always
+        self.assertTrue(ReminderChecker.yearly(self.R, at(2026, 6, 16, 9, 0), None))
+
+    def test_missed_ones_come_together(self):
+        due = schedule.due_heads_ups(self.R, at(2026, 6, 14, 9, 0), {})
+        self.assertEqual(sorted(d for d, _ in due), [3, 14])
+        self.assertEqual(min(due)[0], 3)  # the app shows the closest one
+
+    def test_old_single_number_and_old_mark(self):
+        old = {"id": "o", "recurrence_type": "once", "time": "15:30", "date": "2026-12-01", "remind_before_days": 7}
+        self.assertEqual(schedule.leads_of(old), [7])
+        self.assertEqual(schedule.due_heads_ups(old, at(2026, 11, 24, 15, 30), {}), [(7, at(2026, 12, 1, 15, 30))])
+        # Already shown by an older version (single <id>:early mark): not again
+        self.assertEqual(schedule.due_heads_ups(old, at(2026, 11, 25, 15, 30), {"o:early": "2026-11-24T15:30:00"}), [])
+
+    def test_leads_parsing_and_text(self):
+        self.assertEqual(schedule.leads_of({"remind_before_days": [3, 30, 3, 0, "x"]}), [30, 3])
+        self.assertEqual(schedule.leads_of({}), [])
+        self.assertEqual(schedule.leads_text([3, 30, 14]), "1 month, 2 weeks and 3 days")
+        self.assertEqual(schedule.leads_text([1]), "1 day")
+
+
+class WeekStartTest(unittest.TestCase):
+    def tearDown(self):
+        schedule.set_week_start(0)
+
+    def test_monday_first_by_default(self):
+        self.assertEqual(schedule.week_order(), [0, 1, 2, 3, 4, 5, 6])
+        self.assertEqual(schedule.week_start_of(datetime.date(2026, 11, 1)), datetime.date(2026, 10, 26))
+
+    def test_sunday_first(self):
+        schedule.set_week_start(6)
+        self.assertEqual(schedule.week_order(), [6, 0, 1, 2, 3, 4, 5])
+        nov1 = datetime.date(2026, 11, 1)  # a Sunday
+        self.assertEqual(schedule.column_of(nov1), 0)
+        self.assertEqual(schedule.week_start_of(nov1), nov1)
+        self.assertEqual(schedule.column_of(datetime.date(2026, 11, 7)), 6)  # Saturday ends the row
+        self.assertEqual(schedule.week_start_of(datetime.date(2026, 12, 1)), datetime.date(2026, 11, 29))
+
+    def test_bad_value_falls_back_to_monday(self):
+        schedule.set_week_start(9)
+        self.assertEqual(schedule.week_start(), 0)
