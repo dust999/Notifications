@@ -254,3 +254,52 @@ class CalendarOccurrencesTest(unittest.TestCase):
         monthly = {"recurrence_type": "monthly", "time": "09:00", "monthly_day": 10}
         occ = schedule.occurrences_between(monthly, datetime.date(2026, 11, 20), datetime.date(2027, 1, 5))
         self.assertEqual([o.date() for o in occ], [datetime.date(2026, 12, 10)])
+
+
+class HeadsUpTest(unittest.TestCase):
+    def test_birthday_a_month_earlier(self):
+        r = {"id": "b", "recurrence_type": "yearly", "time": "09:00", "yearly_month": 6, "yearly_day": 16,
+             "remind_before_days": 30}
+        self.assertIsNone(schedule.early_occurrence(r, at(2026, 5, 17, 8, 59)))
+        self.assertEqual(schedule.early_occurrence(r, at(2026, 5, 17, 9, 0)), at(2026, 6, 16, 9, 0))
+        # Shown once: not again the next day, but again a year later
+        self.assertIsNone(schedule.early_occurrence(r, at(2026, 5, 18, 9, 0), at(2026, 5, 17, 9, 0)))
+        self.assertEqual(schedule.early_occurrence(r, at(2027, 5, 17, 9, 0), "2026-05-17T09:00:00"),
+                         at(2027, 6, 16, 9, 0))
+
+    def test_birthday_early_in_january_from_december(self):
+        r = {"id": "b", "recurrence_type": "yearly", "time": "10:00", "yearly_month": 1, "yearly_day": 5,
+             "remind_before_days": 30}
+        self.assertEqual(schedule.early_occurrence(r, at(2026, 12, 6, 10, 0)), at(2027, 1, 5, 10, 0))
+
+    def test_bills_two_weeks_earlier(self):
+        r = {"id": "m", "recurrence_type": "monthly", "time": "09:00", "monthly_day": 10, "remind_before_days": 14}
+        self.assertIsNone(schedule.early_occurrence(r, at(2026, 11, 20, 9, 0)))
+        self.assertEqual(schedule.early_occurrence(r, at(2026, 11, 26, 9, 0)), at(2026, 12, 10, 9, 0))
+
+    def test_once_two_weeks_earlier(self):
+        r = {"id": "o", "recurrence_type": "once", "time": "15:30", "date": "2026-12-01", "remind_before_days": 14}
+        self.assertIsNone(schedule.early_occurrence(r, at(2026, 11, 17, 15, 29)))
+        self.assertEqual(schedule.early_occurrence(r, at(2026, 11, 17, 15, 30)), at(2026, 12, 1, 15, 30))
+
+    def test_daily_never_gets_heads_up(self):
+        r = {"id": "d", "recurrence_type": "daily", "time": "11:00", "remind_before_days": 30}
+        self.assertIsNone(schedule.early_occurrence(r, at(2026, 11, 9, 12, 0)))
+
+    def test_choices_per_repeat(self):
+        now = at(2026, 11, 9, 12, 0)
+        self.assertEqual(schedule.lead_choices({"recurrence_type": "daily", "time": "11:00"}, now), [])
+        self.assertEqual(schedule.lead_choices({"recurrence_type": "weekly", "time": "11:00"}, now), [])
+        self.assertEqual(schedule.lead_choices({"recurrence_type": "monthly", "time": "09:00", "monthly_day": 10}, now),
+                         [1, 3, 7, 14])
+        self.assertEqual(schedule.lead_choices({"recurrence_type": "yearly", "time": "09:00", "yearly_month": 6,
+                                                "yearly_day": 16}, now), [1, 3, 7, 14, 30])
+        soon = {"recurrence_type": "once", "time": "15:30", "date": "2026-11-14"}  # 5 days away
+        self.assertEqual(schedule.lead_choices(soon, now), [1, 3])
+        far = {"recurrence_type": "once", "time": "15:30", "date": "2027-01-20"}
+        self.assertEqual(schedule.lead_choices(far, now), [1, 3, 7, 14, 30])
+        self.assertEqual(schedule.lead_choices({"recurrence_type": "once", "time": "09:00", "date": "2026-11-10"}, now), [])
+
+    def test_labels(self):
+        self.assertEqual([schedule.lead_label(d) for d in schedule.LEAD_DAYS],
+                         ["1 day", "3 days", "1 week", "2 weeks", "1 month"])

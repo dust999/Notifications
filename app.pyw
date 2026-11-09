@@ -245,34 +245,17 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         for reminder in self.data_manager.get_reminders():
             if not self._validate_reminder(reminder):
                 continue
-            early = self._early_occurrence(reminder, now, completed_map)
+            early = schedule.early_occurrence(reminder, now, completed_map.get(f"{reminder['id']}:early"))
             if early is not None:
-                days = reminder["remind_before_days"]
+                lead = schedule.lead_label(reminder["remind_before_days"])
                 self.show_fullscreen_reminder(
-                    reminder, early, f"Coming up in {days} day{'s' if days > 1 else ''}: "
+                    reminder, early, f"Coming up in {lead}: "
                                      f"{schedule.WEEKDAYS[early.weekday()]}, {schedule.MONTHS[early.month - 1]} {early.day}")
                 self.data_manager.add_completed_entry(f"{reminder['id']}:early")
             if self.should_show_reminder(reminder, now, set(), completed):
                 occ = schedule.next_occurrence(reminder, now, completed_map.get(reminder["id"]))
                 self.show_fullscreen_reminder(reminder, occ)
                 self.mark_reminder_completed(reminder)
-
-    def _early_occurrence(self, reminder, now, completed_map):
-        """'Remind me earlier': the occurrence a heads-up is due for right now, if any.
-        The heads-up has its own 'shown' mark (<id>:early), so it fires once per occurrence."""
-        days = reminder.get("remind_before_days")
-        if not days:
-            return None
-        shift = datetime.timedelta(days=days)
-        last = completed_map.get(f"{reminder['id']}:early")
-        try:
-            last_shifted = datetime.datetime.fromisoformat(last) + shift if last else None
-        except ValueError:
-            last_shifted = None
-        occ = schedule.next_occurrence(reminder, now + shift, last_shifted)
-        if occ is not None and now < occ <= now + shift:
-            return occ
-        return None
 
     def should_show_reminder(self, reminder, now, completed_records, completed=None):
         """Check if a reminder should be shown at the given time"""

@@ -38,8 +38,22 @@ def _col(name, alpha=None):
 
 
 def _cat_colors(reminder):
+    """(symbol color, fill) for a reminder: its own color if the user chose one, else its category's."""
+    own = theme.reminder_color(reminder.get("color"))
+    if own is not None:
+        fill = QtGui.QColor(own)
+        fill.setAlphaF(0.24 if theme.is_dark() else 0.17)
+        return own, fill
     symbol, tint = theme.c("cat")[schedule.category_of(reminder)]
     return theme.qcolor(symbol), theme.qcolor(tint)
+
+
+def _dot_color(items):
+    """Year view dot: a chosen color wins over category colors (bills red, payday green)."""
+    for _occ, r in items:
+        if theme.reminder_color(r.get("color")) is not None:
+            return _cat_colors(r)[0], True
+    return _cat_colors(items[0][1])[0], False
 
 
 def _darken_overlay():
@@ -239,7 +253,9 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
         p.setBrush(symbol)
         p.drawRoundedRect(QtCore.QRectF(rect.x() + px(3), rect.y() + px(4), px(3), rect.height() - px(8)), 1.5, 1.5)
         time_rect = QtCore.QRectF(rect.x() + px(10), rect.y(), px(40), rect.height())
-        self._text(p, time_rect, f"{occ:%H:%M}", 12, 400, "text2", elide=False)
+        colored = theme.reminder_color(reminder.get("color")) is not None
+        self._text(p, time_rect, f"{occ:%H:%M}", 12, 600 if colored else 400, symbol if colored else "text2",
+                   elide=False)
         fm = QtGui.QFontMetrics(theme.font(12))
         title_x = time_rect.x() + fm.horizontalAdvance("00:00") + px(6)
         self._text(p, QtCore.QRectF(title_x, rect.y(), rect.right() - title_x - px(4), rect.height()),
@@ -326,7 +342,8 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
             x += size + px(8)
         title = reminder.get("text", "")
         f = theme.font(13, 600)
-        title_w = min(QtGui.QFontMetrics(f).horizontalAdvance(title), rect.right() - x - px(8))
+        # +2: elidedText gets a whole-pixel width, which can cut a title that exactly fits
+        title_w = min(QtGui.QFontMetrics(f).horizontalAdvance(title) + 2, rect.right() - x - px(8))
         self._text(p, QtCore.QRectF(x, rect.y(), title_w, rect.height()), title, 13, 600)
         rule_x = x + title_w + px(10)
         if rect.right() - rule_x > px(40):
@@ -396,10 +413,12 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
                            QtCore.Qt.AlignmentFlag.AlignCenter, False)
                 items = days.get(d)
                 if items:
+                    color, chosen = _dot_color(items)
                     p.setPen(QtCore.Qt.PenStyle.NoPen)
-                    p.setBrush(_cat_colors(items[0][1])[0])
+                    p.setBrush(color)
+                    radius = px(3.2) if chosen else px(2.5)
                     p.drawEllipse(QtCore.QPointF(cell.center().x(), max(circle.bottom(), num.bottom() - px(2)) + px(3)),
-                                  px(2.5), px(2.5))
+                                  radius, radius)
                 self._hits.append((cell, "day", d))
 
     def _year_tooltip(self, d):

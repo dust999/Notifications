@@ -1,4 +1,5 @@
 """New reminder / Edit reminder dialog."""
+import calendar
 import datetime
 import uuid
 
@@ -6,10 +7,10 @@ from PyQt6 import QtCore, QtWidgets
 
 import schedule
 import theme
-from widgets import GlassDialog, IconButton, Segmented, divider, label
+from widgets import ColorSwatch, DatePopup, GlassDialog, IconButton, Segmented, divider, label
 
 REPEATS = ["once", "daily", "weekly", "monthly", "yearly"]
-EARLIER = [0, 1, 3, 7]
+EARLIER = [0] + schedule.LEAD_DAYS
 CATEGORY_ICONS = {"work": "icons/work.png", "personal": "icons/home.png",
                   "health": "icons/health.png", "shopping": "icons/shopping.png", "none": ""}
 
@@ -65,7 +66,10 @@ class ReminderEditor(GlassDialog):
         # Only the fields the chosen repeat needs are shown
         self.date = QtWidgets.QDateEdit()
         self.date.setDisplayFormat("dd.MM.yyyy")
-        self.date.setCalendarPopup(True)
+        # Typing works; the calendar button next to it opens our own month picker
+        self.date.setCalendarPopup(False)
+        self.date.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.date.setMinimumWidth(theme.px(160))  # room for the full year and the popup arrow
         self.days = QtWidgets.QWidget()
         days_lay = QtWidgets.QHBoxLayout(self.days)
         days_lay.setContentsMargins(0, 0, 0, 0)
@@ -91,10 +95,15 @@ class ReminderEditor(GlassDialog):
         self.year_day.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.year_day.setFixedWidth(theme.px(80))
 
+        once_pick = self._calendar_button(lambda: self._pick_once_date())
+        month_pick = self._calendar_button(lambda: self._pick_monthly_day())
+        year_pick = self._calendar_button(lambda: self._pick_yearly_date())
+        self._pickers = [(once_pick, self.date), (month_pick, self.month_day), (year_pick, self.year_day)]
+
         self.detail = {}
-        for kind, widgets in (("once", [self.date]), ("weekly", [self.days]),
-                              ("monthly", [self.month_day, self.month_note]),
-                              ("yearly", [self.year_month, self.year_day])):
+        for kind, widgets in (("once", [self.date, once_pick]), ("weekly", [self.days]),
+                              ("monthly", [self.month_day, month_pick, self.month_note]),
+                              ("yearly", [self.year_month, self.year_day, year_pick])):
             box = QtWidgets.QWidget()
             lay = QtWidgets.QHBoxLayout(box)
             lay.setContentsMargins(0, 6, 0, 0)
@@ -122,12 +131,27 @@ class ReminderEditor(GlassDialog):
             cats.addWidget(b)
         root.addLayout(cats)
 
+        # Color: makes a reminder stand out in the calendar (payday green, bills red...)
+        root.addSpacing(6)
+        root.addWidget(label("Color", "field"))
+        colors = QtWidgets.QHBoxLayout()
+        colors.setSpacing(theme.px(4))
+        self.color_group = QtWidgets.QButtonGroup(self)
+        self.color_names = [None] + [key for key, *_ in theme.REMINDER_COLORS]
+        tips = ["No color"] + [name for _, name, *_ in theme.REMINDER_COLORS]
+        for i, (key, tip) in enumerate(zip(self.color_names, tips)):
+            swatch = ColorSwatch(key, tip)
+            self.color_group.addButton(swatch, i)
+            colors.addWidget(swatch)
+        colors.addStretch()
+        root.addLayout(colors)
+
         self.earlier_box = QtWidgets.QWidget()
         eb = QtWidgets.QVBoxLayout(self.earlier_box)
         eb.setContentsMargins(0, 6, 0, 0)
         eb.setSpacing(6)
         eb.addWidget(label("Remind me earlier", "field"))
-        self.earlier = Segmented(["Off", "1 day", "3 days", "1 week before"])
+        self.earlier = Segmented(["Off"] + [schedule.lead_label(d) for d in schedule.LEAD_DAYS])
         eb.addWidget(self.earlier)
         root.addWidget(self.earlier_box)
 
@@ -185,6 +209,8 @@ class ReminderEditor(GlassDialog):
         self.year_month.setCurrentIndex(r.get("yearly_month", soon.month) - 1)
         self.year_day.setValue(r.get("yearly_day", soon.day))
         self.cat_group.button(schedule.CATEGORIES.index(schedule.category_of(r))).setChecked(True)
+        color = r.get("color")
+        self.color_group.button(self.color_names.index(color) if color in self.color_names else 0).setChecked(True)
         before = r.get("remind_before_days", 0)
         self.earlier.set_index(EARLIER.index(before) if before in EARLIER else 0)
 
@@ -211,7 +237,58 @@ class ReminderEditor(GlassDialog):
             data["yearly_day"] = self.year_day.value()
         if kind in ("once", "monthly", "yearly") and self.earlier.index() > 0:
             data["remind_before_days"] = EARLIER[self.earlier.index()]
+        color = self.color_names[max(self.color_group.checkedId(), 0)]
+        if color:
+            data["color"] = color
         return data
+
+    # ----- picking a date in a calendar -----
+
+    def _calendar_button(self, handler):
+        b = IconButton("calendar", "Pick a date in the calendar", 36, 20)
+        b.setProperty("kind", "tool")
+        self.date.ensurePolished()
+        side = max(self.date.sizeHint().height(), theme.px(36))
+        b._side = side
+        b.setFixedSize(side, side)
+        b.clicked.connect(handler)
+        return b
+
+    def showEvent(self, event):
+        # Square calendar buttons exactly as tall as the field next to them (known once styled)
+        for button, field in self._pickers:
+            side = field.sizeHint().height()
+            button._side = side
+            button.setFixedSize(side, side)
+        super().showEvent(event)
+
+    def _pick_once_date(self):
+        q = self.date.date()
+        popup = DatePopup(datetime.date(q.year(), q.month(), q.day()), self)
+        popup.picked.connect(lambda d: self.date.setDate(QtCore.QDate(d.year, d.month, d.day)))
+        popup.show_under(self.date)
+
+    def _pick_monthly_day(self):
+        """Only the day of the month matters: open on its next date, take the day that's clicked."""
+        today = datetime.date.today()
+        day = self.month_day.value()
+        clamp = lambda d: d.replace(day=min(day, calendar.monthrange(d.year, d.month)[1]))
+        start = clamp(today)
+        if start < today:
+            start = clamp((today.replace(day=1) + datetime.timedelta(days=32)).replace(day=1))
+        popup = DatePopup(start, self)
+        popup.picked.connect(lambda d: self.month_day.setValue(d.day))
+        popup.show_under(self.month_day)
+
+    def _pick_yearly_date(self):
+        """The year doesn't matter for a yearly reminder: open on its next date, keep month and day."""
+        today = datetime.date.today()
+        month, day = self.year_month.currentIndex() + 1, self.year_day.value()
+        clamp = lambda y: datetime.date(y, month, min(day, calendar.monthrange(y, month)[1]))
+        start = clamp(today.year) if clamp(today.year) >= today else clamp(today.year + 1)
+        popup = DatePopup(start, self)
+        popup.picked.connect(lambda d: (self.year_month.setCurrentIndex(d.month - 1), self.year_day.setValue(d.day)))
+        popup.show_under(self.year_month)
 
     # ----- behaviour -----
 
@@ -219,11 +296,25 @@ class ReminderEditor(GlassDialog):
         kind = REPEATS[self.repeat.index()]
         for k, box in self.detail.items():
             box.setVisible(k == kind)
-        self.earlier_box.setVisible(kind in ("once", "monthly", "yearly"))
         self.adjustSize()
         self._update_preview()
 
+    def _update_earlier(self):
+        """Show only the heads-up options that make sense for the current repeat, date and time."""
+        data = self.get_data()
+        data.pop("remind_before_days", None)
+        allowed = schedule.lead_choices(data, datetime.datetime.now())
+        for i, days in enumerate(EARLIER):
+            button = self.earlier.group.button(i)
+            button.setVisible(i == 0 or days in allowed)
+        if EARLIER[max(self.earlier.index(), 0)] not in [0] + allowed:
+            self.earlier.group.button(0).setChecked(True)  # chosen option no longer fits: back to Off
+        if self.earlier_box.isHidden() == bool(allowed):
+            self.earlier_box.setVisible(bool(allowed))
+            QtCore.QTimer.singleShot(0, self.adjustSize)
+
     def _update_preview(self):
+        self._update_earlier()
         data = self.get_data()
         if data["recurrence_type"] == "weekly" and not data["weekly_days"]:
             self.preview.setText("Choose at least one day")
@@ -231,7 +322,7 @@ class ReminderEditor(GlassDialog):
         text = schedule.preview(data, datetime.datetime.now())
         days = data.get("remind_before_days")
         if days:
-            text += f", plus a heads-up {days} day{'s' if days > 1 else ''} before"
+            text += f", plus a heads-up {schedule.lead_label(days)} before"
         self.preview.setText(text)
 
     def _set_error(self, text):

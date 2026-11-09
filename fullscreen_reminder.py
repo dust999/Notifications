@@ -27,7 +27,8 @@ class FullscreenReminder(QtWidgets.QWidget):
         content = QtWidgets.QVBoxLayout()
         content.setSpacing(0)
         content.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
-        badge = CategoryBadge(schedule.category_of(reminder), size=64, icon_size=34, radius=18)
+        badge = CategoryBadge(schedule.category_of(reminder), size=64, icon_size=34, radius=18,
+                              color=reminder.get("color"))
         content.addWidget(badge, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
         content.addSpacing(28)
 

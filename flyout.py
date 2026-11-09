@@ -22,7 +22,7 @@ class ReminderRow(QtWidgets.QWidget):
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(8, 6, 10, 6)
         lay.setSpacing(theme.px(12))
-        badge = CategoryBadge(schedule.category_of(reminder))
+        badge = CategoryBadge(schedule.category_of(reminder), color=reminder.get("color"))
         badge.dimmed = done
         lay.addWidget(badge)
 

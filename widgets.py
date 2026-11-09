@@ -1,4 +1,6 @@
 """Small custom widgets for the redesigned UI (plain PyQt6, painted to match the mockup)."""
+import datetime
+
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 import theme
@@ -194,22 +196,23 @@ class IconButton(QtWidgets.QPushButton):
 
 
 class CategoryBadge(QtWidgets.QWidget):
-    """Category symbol in a muted tinted rounded square."""
+    """Category symbol in a muted tinted rounded square; in the reminder's own color if it has one."""
 
-    def __init__(self, category, size=40, icon_size=22, radius=10, parent=None):
+    def __init__(self, category, size=40, icon_size=22, radius=10, parent=None, color=None):
         super().__init__(parent)
         self.category, self.icon_size, self.radius = category, theme.px(icon_size), theme.px(radius)
+        self.color = color
         self.setFixedSize(theme.px(size), theme.px(size))
         self.dimmed = False
 
     def paintEvent(self, event):
-        symbol, tint = theme.c("cat")[self.category]
+        symbol, tint = theme.badge_colors(self.category, self.color)
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         if self.dimmed:
             p.setOpacity(0.5)
         p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(theme.qcolor(tint))
+        p.setBrush(tint)
         p.drawRoundedRect(QtCore.QRectF(self.rect()), self.radius, self.radius)
         name = "check" if self.dimmed else f"cat-{self.category}"
         pm = theme.pixmap(name, symbol, self.icon_size)
@@ -315,3 +318,208 @@ class NextUpGlow(QtWidgets.QWidget):
         p.setBrush(g)
         p.drawRect(self.rect())
         p.end()
+
+
+class ColorSwatch(QtWidgets.QAbstractButton):
+    """Round color choice for a reminder. `color_name` None = no color (an empty ring with a slash)."""
+
+    def __init__(self, color_name, tooltip, parent=None):
+        super().__init__(parent)
+        self.color_name = color_name
+        self.setCheckable(True)
+        self.setFixedSize(theme.px(34), theme.px(34))
+        self.setToolTip(tooltip)
+        self.setAccessibleName(tooltip)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
+
+    def enterEvent(self, event):
+        self.update()
+
+    def leaveEvent(self, event):
+        self.update()
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        r = QtCore.QRectF(self.rect())
+        inner = r.adjusted(theme.px(6), theme.px(6), -theme.px(6), -theme.px(6))
+        color = theme.reminder_color(self.color_name)
+        if color is None:
+            p.setPen(QtGui.QPen(theme.qcolor(theme.c("muted")), 1.5))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawEllipse(inner.adjusted(1, 1, -1, -1))
+            p.drawLine(QtCore.QPointF(inner.left() + inner.width() * 0.2, inner.bottom() - inner.height() * 0.2),
+                       QtCore.QPointF(inner.right() - inner.width() * 0.2, inner.top() + inner.height() * 0.2))
+        else:
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            p.drawEllipse(inner)
+        if self.isChecked() or self.underMouse() or self.hasFocus():
+            ring = theme.qcolor(theme.c("text" if self.isChecked() else "muted"))
+            p.setPen(QtGui.QPen(ring, 2 if self.isChecked() else 1))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawEllipse(r.adjusted(2, 2, -2, -2))
+        p.end()
+
+
+def chevron_icon(angle, size=18):
+    """Left/right arrows: the chevron-down icon turned (90 = left, -90 = right)."""
+    down = theme.pixmap("chevron-down", theme.c("text2"), theme.px(size))
+    pm = down.transformed(QtGui.QTransform().rotate(angle), QtCore.Qt.TransformationMode.SmoothTransformation)
+    pm.setDevicePixelRatio(down.devicePixelRatio())
+    return QtGui.QIcon(pm)
+
+
+_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December"]
+
+
+class _MonthGrid(QtWidgets.QWidget):
+    """Painted Monday-first month for DatePopup: today ringed, the chosen day filled with the accent."""
+    clicked = QtCore.pyqtSignal(object)
+
+    def __init__(self, popup):
+        super().__init__(popup)
+        self.popup = popup
+        self.hover = None
+        self.setMouseTracking(True)
+        self.setFixedSize(theme.px(7 * 38), theme.px(24 + 6 * 34))
+
+    def _cells(self):
+        first = self.popup.month
+        start = first - datetime.timedelta(days=first.weekday())
+        cw, rh, head = self.width() / 7, theme.px(34), theme.px(24)
+        for i in range(42):
+            r, c = divmod(i, 7)
+            yield start + datetime.timedelta(days=i), QtCore.QRectF(c * cw, head + r * rh, cw, rh)
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        cw = self.width() / 7
+        p.setFont(theme.font(12, 500))
+        p.setPen(theme.qcolor(theme.c("muted")))
+        for i, name in enumerate("MTWTFSS"):
+            p.drawText(QtCore.QRectF(i * cw, 0, cw, theme.px(24)), int(QtCore.Qt.AlignmentFlag.AlignCenter), name)
+        today = datetime.date.today()
+        for d, rect in self._cells():
+            side = min(rect.width(), rect.height()) - theme.px(4)
+            circle = QtCore.QRectF(rect.center().x() - side / 2, rect.center().y() - side / 2, side, side)
+            chosen = d == self.popup.selected
+            if chosen or d == self.hover:
+                p.setPen(QtCore.Qt.PenStyle.NoPen)
+                p.setBrush(theme.qcolor(theme.c("accent" if chosen else "hover")))
+                p.drawEllipse(circle)
+            if d == today and not chosen:
+                p.setPen(QtGui.QPen(theme.qcolor(theme.c("accent")), 1.5))
+                p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                p.drawEllipse(circle.adjusted(1, 1, -1, -1))
+            inside = d.month == self.popup.month.month
+            color = "on_accent" if chosen else ("text" if inside else "muted")
+            p.setPen(theme.qcolor(theme.c(color)))
+            p.setFont(theme.font(13, 650 if chosen or d == today else 400))
+            p.drawText(rect, int(QtCore.Qt.AlignmentFlag.AlignCenter), str(d.day))
+        p.end()
+
+    def _date_at(self, pos):
+        for d, rect in self._cells():
+            if rect.contains(pos):
+                return d
+        return None
+
+    def mouseMoveEvent(self, event):
+        d = self._date_at(event.position())
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor if d else QtCore.Qt.CursorShape.ArrowCursor)
+        if d != self.hover:
+            self.hover = d
+            self.update()
+
+    def leaveEvent(self, event):
+        self.hover = None
+        self.update()
+
+    def mousePressEvent(self, event):
+        d = self._date_at(event.position())
+        if d is not None and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.clicked.emit(d)
+
+
+class DatePopup(QtWidgets.QFrame):
+    """Small month calendar that drops down under a calendar button. Click a day to pick it.
+    Arrows move the day, PageUp/PageDown the month, Enter picks, Esc closes."""
+    picked = QtCore.pyqtSignal(object)
+
+    def __init__(self, date, parent=None):
+        super().__init__(parent, QtCore.Qt.WindowType.Popup | QtCore.Qt.WindowType.FramelessWindowHint
+                         | QtCore.Qt.WindowType.NoDropShadowWindowHint)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.selected = date
+        self.month = date.replace(day=1)
+        root = QtWidgets.QVBoxLayout(self)
+        m = theme.px(12)
+        root.setContentsMargins(m, theme.px(10), m, m)
+        root.setSpacing(theme.px(6))
+        head = QtWidgets.QHBoxLayout()
+        prev = IconButton("chevron-down", "Previous month", 32, 18)
+        prev.setIcon(chevron_icon(90))
+        prev.clicked.connect(lambda: self.shift(-1))
+        nxt = IconButton("chevron-down", "Next month", 32, 18)
+        nxt.setIcon(chevron_icon(-90))
+        nxt.clicked.connect(lambda: self.shift(1))
+        self.title = label("", "row")
+        self.title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        head.addWidget(prev)
+        head.addWidget(self.title, 1)
+        head.addWidget(nxt)
+        root.addLayout(head)
+        self.grid = _MonthGrid(self)
+        self.grid.clicked.connect(self._pick)
+        root.addWidget(self.grid)
+        self._sync()
+
+    def _sync(self):
+        self.title.setText(f"{_MONTH_NAMES[self.month.month - 1]} {self.month.year}")
+        self.grid.update()
+
+    def shift(self, months):
+        y, mo = divmod(self.month.month - 1 + months, 12)
+        self.month = self.month.replace(year=self.month.year + y, month=mo + 1)
+        self._sync()
+
+    def _pick(self, d):
+        self.picked.emit(d)
+        self.close()
+
+    def keyPressEvent(self, event):
+        step = {QtCore.Qt.Key.Key_Left: -1, QtCore.Qt.Key.Key_Right: 1,
+                QtCore.Qt.Key.Key_Up: -7, QtCore.Qt.Key.Key_Down: 7}.get(event.key())
+        if step:
+            self.selected += datetime.timedelta(days=step)
+            self.month = self.selected.replace(day=1)
+            self._sync()
+        elif event.key() in (QtCore.Qt.Key.Key_PageUp, QtCore.Qt.Key.Key_PageDown):
+            self.shift(-1 if event.key() == QtCore.Qt.Key.Key_PageUp else 1)
+        elif event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            self._pick(self.selected)
+        else:
+            super().keyPressEvent(event)
+
+    def wheelEvent(self, event):
+        self.shift(-1 if event.angleDelta().y() > 0 else 1)
+
+    def paintEvent(self, event):
+        paint_surface(self, False, theme.px(10), "popup")
+
+    def show_under(self, widget):
+        """Open below `widget` (above it if there's no room), kept on its screen."""
+        self.adjustSize()
+        area = widget.screen().availableGeometry()
+        pos = widget.mapToGlobal(QtCore.QPoint(0, widget.height() + theme.px(4)))
+        if pos.y() + self.height() > area.bottom():
+            pos = widget.mapToGlobal(QtCore.QPoint(0, -self.height() - theme.px(4)))
+        pos.setX(min(max(pos.x(), area.left()), area.right() - self.width()))
+        self.move(pos)
+        self.show()
+        self.setFocus()

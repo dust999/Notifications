@@ -112,6 +112,51 @@ def next_occurrence(reminder, now, completed_at=None):
     return None
 
 
+# "Remind me earlier": how many days before an occurrence a heads-up can come
+LEAD_DAYS = [1, 3, 7, 14, 30]
+_LEAD_LABELS = {1: "1 day", 3: "3 days", 7: "1 week", 14: "2 weeks", 30: "1 month"}
+
+
+def lead_label(days):
+    return _LEAD_LABELS.get(days, f"{days} day{'s' if days != 1 else ''}")
+
+
+def lead_choices(reminder, now):
+    """Heads-up options that make sense for this reminder (days before):
+    none for daily and weekly ones, up to 2 weeks for monthly ones (a month earlier would land
+    on the previous occurrence), all for yearly ones, and for a one-time reminder only those
+    that are still in the future."""
+    kind = reminder.get("recurrence_type")
+    if kind == "monthly":
+        return [d for d in LEAD_DAYS if d <= 14]
+    if kind == "yearly":
+        return list(LEAD_DAYS)
+    if kind == "once":
+        occ = next_occurrence(reminder, now)
+        if occ is None:
+            return []
+        return [d for d in LEAD_DAYS if occ - datetime.timedelta(days=d) > now]
+    return []
+
+
+def early_occurrence(reminder, now, last_early=None):
+    """The occurrence a heads-up is due for right now, if any. `last_early` is when the previous
+    heads-up was shown (ISO string or datetime), so each occurrence gets at most one."""
+    days = reminder.get("remind_before_days")
+    if not days or reminder.get("recurrence_type") not in ("once", "monthly", "yearly"):
+        return None
+    shift = datetime.timedelta(days=days)
+    if isinstance(last_early, str):
+        try:
+            last_early = datetime.datetime.fromisoformat(last_early)
+        except ValueError:
+            last_early = None
+    occ = next_occurrence(reminder, now + shift, last_early + shift if last_early else None)
+    if occ is not None and now < occ <= now + shift:
+        return occ
+    return None
+
+
 def _still_due(reminder, occ, now):
     """Mirror ReminderChecker: which past, unshown occurrences it would still show now."""
     kind = reminder.get("recurrence_type")

@@ -52,6 +52,43 @@ def _light(accent, hover, base, tint):
     }
 
 
+# Colors the user can give a reminder (payday green, bills red...): (name, dark theme, light theme).
+# Brighter than the category colors on purpose: a colored reminder should stand out in the calendar.
+REMINDER_COLORS = [
+    ("red", "Red", "#f08585", "#c43c3c"),
+    ("yellow", "Yellow", "#e6c86e", "#9a7410"),
+    ("green", "Green", "#7fd19b", "#2c8a4e"),
+    ("cyan", "Light blue", "#72cde4", "#16809a"),
+    ("blue", "Blue", "#7f9cf2", "#2f55c8"),
+    ("purple", "Purple", "#bba1f2", "#6a4cc4"),
+]
+
+
+def reminder_color(name):
+    """QColor for a reminder color name in the current theme, or None for no color."""
+    for key, _label, dark, light in REMINDER_COLORS:
+        if key == name:
+            return QtGui.QColor(dark if _dark_mode else light)
+    return None
+
+
+def badge_colors(category, color_name=None):
+    """(symbol color '#rrggbb', fill QColor) for a category badge in the list and fullscreen views.
+    A reminder's own color wins, toned a little toward grey: the same hue as in the calendar, calmer."""
+    own = reminder_color(color_name)
+    if own is None:
+        symbol, tint = c("cat")[category]
+        return qcolor(symbol).name(), qcolor(tint)
+    grey = qcolor(c("text2"))
+    mix = 0.25
+    soft = QtGui.QColor(round(own.red() * (1 - mix) + grey.red() * mix),
+                        round(own.green() * (1 - mix) + grey.green() * mix),
+                        round(own.blue() * (1 - mix) + grey.blue() * mix))
+    fill = QtGui.QColor(own)
+    fill.setAlphaF(0.16 if _dark_mode else 0.13)
+    return soft.name(), fill
+
+
 # Color schemes: dark tokens, light tokens, and the tray/app tile gradient (top, bottom)
 PALETTES = {
     "slate": (_dark("#86a8f4", "#a3bdf7", "#0c1a38", (27, 30, 39), (214, 226, 255)),
