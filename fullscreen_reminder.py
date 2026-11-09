@@ -3,7 +3,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 import schedule
 import theme
-from widgets import CategoryBadge, animations_enabled, label
+from widgets import CategoryBadge, close_with_fade, fade_window, label
 
 
 class FullscreenReminder(QtWidgets.QWidget):
@@ -68,17 +68,10 @@ class FullscreenReminder(QtWidgets.QWidget):
         done.setFocus()
 
     def show(self):
+        fade_window(self, True, 0, 240)
         super().show()
         self.raise_()
         self.activateWindow()
-        if animations_enabled():
-            self.setWindowOpacity(0.0)
-            fade = QtCore.QPropertyAnimation(self, b"windowOpacity", self)
-            fade.setDuration(240)
-            fade.setStartValue(0.0)
-            fade.setEndValue(1.0)
-            fade.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
-            fade.start(QtCore.QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -103,5 +96,7 @@ class FullscreenReminder(QtWidgets.QWidget):
             super().keyPressEvent(event)
 
     def closeEvent(self, event):
+        if close_with_fade(self, event, offset=0):
+            return
         self.closed.emit()
         super().closeEvent(event)

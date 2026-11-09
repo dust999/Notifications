@@ -12,12 +12,12 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 import schedule
 import theme
-from widgets import IconButton, Segmented, label, paint_surface
+from widgets import IconButton, Segmented, animations_enabled, label, paint_surface, zoom_window
 
 MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
                "August", "September", "October", "November", "December"]
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-VIEWS = ["day", "month", "year"]
+VIEWS = ["day", "month", "year"]   # from close-up to overview: zooming goes along this list
 NEW_AT = datetime.time(9, 0)  # time for a reminder created by clicking a day
 HINTS = {"day": "Click a time to add a reminder",
          "month": "Click a day to add a reminder, or its number to open the day",
@@ -109,6 +109,14 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
         self.ticker = QtCore.QTimer(self)
         self.ticker.timeout.connect(self._tick)
         self.ticker.start(30_000)
+        # A view change plays as a short transition between two snapshots (see set_view)
+        self._trans = None
+        self._trans_t = 0.0
+        self._anim = QtCore.QVariantAnimation(self)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.valueChanged.connect(self._trans_step)
+        self._anim.finished.connect(self._trans_end)
 
     # ----- data -----
 
@@ -140,10 +148,26 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
 
     # ----- view -----
 
+    @staticmethod
+    def _period(view, d):
+        """What a view shows for a date: two dates with the same period look the same."""
+        return d if view == "day" else (d.year, d.month) if view == "month" else d.year
+
     def set_view(self, view, date):
+        old_view, old_date = self.view, self.date
+        before = anchor = None
+        if (self.isVisible() and not self.viewport().size().isEmpty() and animations_enabled()
+                and self._period(view, date) != self._period(old_view, old_date)):
+            before = self._snapshot()   # what's on screen now, a running transition included
+            if VIEWS.index(view) < VIEWS.index(old_view):
+                anchor = self._anchor_of(date)   # zooming in: the new date's place in the old view
+        self._trans_end()
         changed_view = view != self.view or (view == "day" and date != self.date)
         self.view, self.date, self._hover = view, date, None
         self._update_scroll()
+        # Show or hide the scroll bar now (Qt does it a moment later): the new view's snapshot
+        # must have its final width, and the late resize would cut the transition short
+        self.setViewportMargins(self.viewportMargins())
         if changed_view:
             sb = self.verticalScrollBar()
             if view == "day":
@@ -160,11 +184,111 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
                 sb.setValue(0 if bottom <= vh else round(min(top, bottom - vh + L["margin"])))
             else:
                 sb.setValue(0)
+        if before is not None:
+            if view == old_view:
+                self._start_slide(before, 1 if date > old_date else -1)
+            elif VIEWS.index(view) < VIEWS.index(old_view):
+                self._start_zoom(before, anchor, zoom_in=True)
+            else:
+                self._start_zoom(before, self._anchor_of(old_date), zoom_in=False)
         self.viewport().update()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._trans_end()
         self._update_scroll()
+
+    # ----- transitions -----
+    # Prev / next: the old period slides away and fades, the new one comes in from the other side.
+    # Year -> Month -> Day: the calendar zooms into the clicked month or day, which grows into the
+    # new view; going back out, the view shrinks into its place in the overview.
+
+    def _snapshot(self):
+        vp = self.viewport()
+        dpr = vp.devicePixelRatioF()
+        pm = QtGui.QPixmap(round(vp.width() * dpr), round(vp.height() * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(_col("surface_solid"))
+        vp.render(pm, QtCore.QPoint(), QtGui.QRegion(), QtWidgets.QWidget.RenderFlag.DrawChildren)
+        return pm
+
+    def _anchor_of(self, d):
+        """Where date d sits in the current view: its cell in Month, its month in Year."""
+        w, h = self.viewport().width(), self.viewport().height()
+        if self.view == "month":
+            head = theme.px(28)
+            idx = (d - schedule.week_start_of(self.date.replace(day=1))).days
+            if not 0 <= idx < 42:
+                return None
+            row, col = divmod(idx, 7)
+            row_h = (h - head) / 6
+            return QtCore.QRectF(col * w / 7, head + row * row_h, w / 7, row_h)
+        if self.view == "year" and d.year == self.date.year:
+            L = self._year_layout()
+            row, col = divmod(d.month - 1, L["cols"])
+            return QtCore.QRectF(L["margin"] + col * (L["mini_w"] + L["gap_x"]),
+                                 L["margin"] + row * (L["mini_h"] + L["gap_y"]) - self.verticalScrollBar().value(),
+                                 L["mini_w"], L["mini_h"])
+        return None
+
+    def _start_slide(self, old, direction):
+        self._run({"kind": "slide", "old": old, "new": self._snapshot(), "dir": direction},
+                  260, QtCore.QEasingCurve.Type.OutCubic)
+
+    def _start_zoom(self, old, anchor, zoom_in):
+        new = self._snapshot()
+        full = QtCore.QRectF(self.viewport().rect())
+        if anchor is None or anchor.width() < 4 or anchor.height() < 4:
+            anchor = QtCore.QRectF(0, 0, full.width() / 3, full.height() / 3)
+            anchor.moveCenter(full.center())
+        # One uniform zoom about the point that stays put while the anchor grows to fill the view
+        scale = max(min(full.width() / anchor.width(), full.height() / anchor.height()), 1.5)
+        a, f = anchor.center(), full.center()
+        pivot = QtCore.QPointF((scale * a.x() - f.x()) / (scale - 1), (scale * a.y() - f.y()) / (scale - 1))
+        coarse, fine = (old, new) if zoom_in else (new, old)
+        self._run({"kind": "zoom", "coarse": coarse, "fine": fine, "in": zoom_in, "scale": scale, "pivot": pivot},
+                  340, QtCore.QEasingCurve.Type.OutCubic)
+
+    def _run(self, transition, duration, easing):
+        self._trans, self._trans_t = transition, 0.0
+        self._anim.setDuration(duration)
+        self._anim.setEasingCurve(easing)
+        self._anim.start()
+
+    def _trans_step(self, value):
+        self._trans_t = value
+        self.viewport().update()
+
+    def _trans_end(self):
+        if self._trans is not None:
+            self._trans = None
+            self._anim.stop()
+            self.viewport().update()
+
+    def _paint_transition(self, p):
+        tr, e = self._trans, self._trans_t
+        clamp = lambda v: min(max(v, 0.0), 1.0)
+        p.fillRect(self.viewport().rect(), _col("surface_solid"))
+        p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+        if tr["kind"] == "slide":
+            d = tr["dir"]
+            p.setOpacity(1 - clamp(e / 0.45))
+            p.drawPixmap(QtCore.QPointF(-d * theme.px(48) * e, 0), tr["old"])
+            p.setOpacity(clamp((e - 0.12) / 0.7))
+            p.drawPixmap(QtCore.QPointF(d * theme.px(72) * (1 - e), 0), tr["new"])
+            return
+        z = e if tr["in"] else 1 - e   # 0: the overview as it is, 1: zoomed all the way into the anchor
+        for pm, k, opacity in ((tr["coarse"], tr["scale"] ** z, 1.0),
+                               (tr["fine"], tr["scale"] ** (z - 1), clamp((z - 0.12) / 0.55))):
+            if opacity <= 0:
+                continue
+            p.save()
+            p.setOpacity(opacity)
+            p.translate(tr["pivot"])
+            p.scale(k, k)
+            p.translate(-tr["pivot"])
+            p.drawPixmap(QtCore.QPointF(0, 0), pm)
+            p.restore()
 
     def _update_scroll(self):
         vh = self.viewport().height()
@@ -185,6 +309,11 @@ class CalendarCanvas(QtWidgets.QAbstractScrollArea):
         p = QtGui.QPainter(self.viewport())
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+        if self._trans is not None:
+            # Clicks already go by the new view: its hits were collected when it was snapshotted
+            self._paint_transition(p)
+            p.end()
+            return
         self._hits = []
         {"day": self._paint_day, "month": self._paint_month, "year": self._paint_year}[self.view](p)
         p.end()
@@ -677,6 +806,8 @@ class DayCard(QtWidgets.QFrame):
         self.close()
 
     def closeEvent(self, event):
+        if self.isVisible():
+            zoom_window(self, False, origin=0.0)
         self.closed.emit()
         super().closeEvent(event)
 
@@ -692,6 +823,91 @@ class DayCard(QtWidgets.QFrame):
         y = min(max(cell.top() - theme.px(4), area.top() + 8), area.bottom() - self.height() - 8)
         self.move(x, y)
         self.show()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        zoom_window(self, True, origin=0.0)
+
+
+class SlidingTitle(QtWidgets.QLabel):
+    """The period title ("November 2026"). It takes all the free room in the toolbar between the
+    arrows and Day / Month / Year; on next / previous the old text flies across that room and out
+    under the buttons, and the new one flies in from the other side. The edges are soft, as if
+    the text went under the buttons."""
+
+    def __init__(self, role):
+        super().__init__()
+        self.setProperty("role", role)
+        self.edge = theme.px(10)   # soft edge on the left; the text rests just right of it
+        self.setContentsMargins(self.edge, 0, 0, 0)
+        self._old, self._dir, self._t = None, 0, 1.0
+        self._anim = QtCore.QVariantAnimation(self)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setDuration(420)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._step)
+        self._anim.finished.connect(self._done)
+
+    def slide_to(self, text, direction):
+        """direction 1: in from the right (later dates), -1: in from the left, 0: fade in place."""
+        if text == self.text():
+            return
+        if not (self.isVisible() and animations_enabled()):
+            self.setText(text)
+            return
+        self._old, self._dir = self.text(), direction
+        self.setText(text)
+        self._t = 0.0
+        self._anim.stop()
+        self._anim.start()
+
+    def _step(self, value):
+        self._t = value
+        self.update()
+
+    def _done(self):
+        self._old = None
+        self.update()
+
+    def paintEvent(self, event):
+        if self._old is None:
+            super().paintEvent(event)
+            return
+        dpr = self.devicePixelRatioF()
+        layer = QtGui.QPixmap(round(self.width() * dpr), round(self.height() * dpr))
+        layer.setDevicePixelRatio(dpr)
+        layer.fill(QtCore.Qt.GlobalColor.transparent)
+        p = QtGui.QPainter(layer)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+        p.setFont(self.font())
+        p.setPen(self.palette().color(QtGui.QPalette.ColorRole.WindowText))
+        rect, align, e = QtCore.QRectF(self.contentsRect()), int(self.alignment()), self._t
+        if self._dir:
+            # Both fly together, a whole width apart: the old one is out when the new one lands
+            w = self.width()
+            p.drawText(rect.translated(-self._dir * w * e, 0), align, self._old)
+            p.drawText(rect.translated(self._dir * w * (1 - e), 0), align, self.text())
+        else:
+            p.setOpacity(1 - min(e / 0.3, 1.0))   # the old one is gone before the new one shows
+            p.drawText(rect, align, self._old)
+            p.setOpacity(min(max((e - 0.28) / 0.5, 0.0), 1.0))
+            p.drawText(rect, align, self.text())
+            p.setOpacity(1.0)
+        # Soft edges: the text fades out as it reaches the buttons on either side
+        fade = QtGui.QLinearGradient(0, 0, self.width(), 0)
+        left, right = self.edge / max(self.width(), 1), theme.px(28) / max(self.width(), 1)
+        fade.setColorAt(0.0, QtGui.QColor(0, 0, 0, 0))
+        fade.setColorAt(min(left, 0.5), QtGui.QColor(0, 0, 0, 255))
+        fade.setColorAt(max(1 - right, 0.5), QtGui.QColor(0, 0, 0, 255))
+        fade.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
+        p.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_DestinationIn)
+        p.fillRect(QtCore.QRectF(0, 0, self.width(), self.height()), fade)
+        p.end()
+        out = QtGui.QPainter(self)
+        out.drawPixmap(0, 0, layer)
+        out.end()
 
 
 class CalendarWindow(QtWidgets.QWidget):
@@ -724,10 +940,8 @@ class CalendarWindow(QtWidgets.QWidget):
         self.next.clicked.connect(lambda: self.step(1))
         bar.addWidget(self.prev)
         bar.addWidget(self.next)
-        bar.addSpacing(px(8))
-        self.title = label("", "h2")
-        bar.addWidget(self.title)
-        bar.addStretch()
+        self.title = SlidingTitle("h2")   # fills the free room: the title flies across it
+        bar.addWidget(self.title, 1)
         self.views = Segmented(["Day", "Month", "Year"])
         self.views.setFixedWidth(px(240))
         self.views.changed.connect(lambda i: self.set_view(VIEWS[i]))
@@ -800,7 +1014,10 @@ class CalendarWindow(QtWidgets.QWidget):
             text = f"{MONTH_NAMES[d.month - 1]} {d.year}"
         else:
             text = str(d.year)
-        self.title.setText(text)
+        # Next / previous: the title slides the same way as the calendar; a new view: it fades
+        shown_view, shown_date = self.canvas.view, self.canvas.date
+        direction = 0 if self.view != shown_view else (d > shown_date) - (d < shown_date)
+        self.title.slide_to(text, direction)
         self.hint.setText(HINTS[self.view])
         # set_index reports a change, which would call set_view again
         self.views.blockSignals(True)

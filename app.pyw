@@ -10,6 +10,7 @@ from reminder_check import ReminderChecker
 from editor import ReminderEditor
 from flyout import RemindersFlyout
 from calendar_window import CalendarWindow
+from widgets import app_quitting, close_now
 import autostart
 import schedule
 import theme
@@ -103,7 +104,7 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         if self.flyout is None:
             return
         old, self.flyout = self.flyout, None
-        old.close()
+        close_now(old)  # the new copy appears in its place: no fade
         self.show_reminder_list(animate=False)
 
     def preview_appearance(self, mode, palette, text_size):
@@ -317,6 +318,7 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         # Force save all changes before exit
         self.data_manager.force_save_all()
         self.hide()
+        app_quitting()
         self.app.quit()
 
 

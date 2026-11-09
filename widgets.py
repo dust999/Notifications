@@ -63,6 +63,188 @@ def animations_enabled():
         return True
 
 
+_quitting = False
+
+
+def app_quitting():
+    """Called right before the app quits: windows close at once, without fading out.
+    (Qt cancels a quit if a window delays its closing.)"""
+    global _quitting
+    _quitting = True
+
+
+def fade_window(win, appear, offset=8, duration=None, on_done=None):
+    """Fade a top-level window in (sliding `offset` px into place) or out (sliding half of
+    that away). `on_done` runs when it ends. Without animations it runs at once."""
+    old = getattr(win, "_fade_anim", None)
+    if old is not None:
+        old.stop()
+    if not animations_enabled():
+        win.setWindowOpacity(1.0 if appear else 0.0)
+        if on_done:
+            on_done()
+        return
+    duration = duration or (190 if appear else 140)
+    here = win.pos()
+    if appear:
+        start_pos, end_pos, start_op, end_op = here + QtCore.QPoint(0, offset), here, 0.0, 1.0
+        win.move(start_pos)
+        win.setWindowOpacity(0.0)
+    else:
+        start_pos, end_pos, start_op, end_op = here, here + QtCore.QPoint(0, offset // 2), win.windowOpacity(), 0.0
+    group = QtCore.QParallelAnimationGroup(win)
+    for prop, start, stop in ((b"windowOpacity", start_op, end_op), (b"pos", start_pos, end_pos)):
+        if prop == b"pos" and not offset:
+            continue
+        a = QtCore.QPropertyAnimation(win, prop, group)
+        a.setDuration(duration)
+        a.setStartValue(start)
+        a.setEndValue(stop)
+        a.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic if appear else QtCore.QEasingCurve.Type.InCubic)
+        group.addAnimation(a)
+    if on_done:
+        group.finished.connect(on_done)
+    win._fade_anim = group
+    group.start()
+
+
+def close_with_fade(win, event, offset=8):
+    """For closeEvent: the first close() fades the window out and closes it for real afterwards.
+    Returns True when the event was put off (the caller returns at once)."""
+    state = getattr(win, "_close_state", None)
+    if state == "closing":
+        event.ignore()          # already fading out: the second close() comes when it ends
+        return True
+    if state == "now" or _quitting or not win.isVisible() or not animations_enabled():
+        return False
+    win._close_state = "closing"
+    event.ignore()
+
+    def finish():
+        win._close_state = "now"
+        win.close()
+    fade_window(win, False, offset, on_done=finish)
+    return True
+
+
+def close_now(win):
+    """Close without an exit animation (a window replaced by a new copy of itself)."""
+    win._close_state = "now"
+    win.close()
+
+
+_ghosts = set()   # pictures still playing; Python must hold them or they vanish mid-animation
+
+
+class _Ghost(QtWidgets.QWidget):
+    """A picture of a window in a see-through window of its own, drawn zoomed and faded.
+    Entrances and exits play on it, so the real window never has to be scaled: while it comes
+    in, the real window is there but invisible; on the way out the real one is already gone."""
+
+    def __init__(self, picture, geometry, origin, radius=None):
+        super().__init__(None, QtCore.Qt.WindowType.FramelessWindowHint | QtCore.Qt.WindowType.Tool
+                         | QtCore.Qt.WindowType.WindowStaysOnTopHint
+                         | QtCore.Qt.WindowType.WindowTransparentForInput
+                         | QtCore.Qt.WindowType.NoDropShadowWindowHint)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.pad = theme.px(20)   # room for the slide
+        self.setGeometry(geometry.adjusted(-self.pad, -self.pad, self.pad, self.pad))
+        self.picture, self.origin = picture, origin
+        self.radius = radius   # rounded windows get a soft shadow, like the one Windows gives them
+        self.scale, self.opacity, self.dy = 1.0, 1.0, 0.0
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+        p.setOpacity(self.opacity)
+        size = QtCore.QSizeF(self.picture.size()) / self.picture.devicePixelRatio()
+        pivot = QtCore.QPointF(self.pad + size.width() / 2, self.pad + size.height() * self.origin)
+        p.translate(pivot.x(), pivot.y() + self.dy)
+        p.scale(self.scale, self.scale)
+        p.translate(-pivot)
+        body = QtCore.QRectF(QtCore.QPointF(self.pad, self.pad), size)
+        if self.radius is not None:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            steps = 12
+            for i in range(1, steps + 1):
+                p.setBrush(QtGui.QColor(0, 0, 0, round(9 * (1 - i / (steps + 1)) ** 2)))
+                p.drawRoundedRect(body.adjusted(-i, -i + 2, i, i + 2), self.radius + i, self.radius + i)
+        p.drawPixmap(body.topLeft(), self.picture)
+        p.end()
+
+
+def _picture(win):
+    """The window as it looks, on a solid surface (the picture has no blurred glass behind it)."""
+    glass = getattr(win, "_has_glass", False)
+    win._has_glass = False
+    if win.layout() is not None:
+        win.layout().activate()   # sizes set just before showing are laid out in the picture too
+    try:
+        return win.grab()
+    finally:
+        win._has_glass = glass
+
+
+def zoom_window(win, appear, origin=0.5, rise=0, on_done=None):
+    """Entrance: the window grows from a bit smaller (and `rise` px lower) while it fades in.
+    Exit: it shrinks a little and fades out. `origin` is the point it grows from, as a share
+    of its height: 0 top, 0.5 middle, 1 bottom. Call it from showEvent (the window is about to
+    appear) or right before the window hides. `on_done` runs once the real window is shown."""
+    old = getattr(win, "_ghost", None)
+    if old is not None:
+        try:
+            old.close()
+        except RuntimeError:
+            pass
+        win._ghost = None
+    if _quitting or not animations_enabled() or getattr(win, "_close_state", None) == "now":
+        if on_done:
+            on_done()
+        return
+    shadow = not win.windowFlags() & QtCore.Qt.WindowType.NoDropShadowWindowHint
+    ghost = _Ghost(_picture(win), win.geometry(), origin, getattr(win, "radius", 8) if shadow else None)
+    _ghosts.add(ghost)
+    ghost.destroyed.connect(lambda _=None, g=ghost: _ghosts.discard(g))
+    s0, s1, o0, o1, d0, d1 = (0.9, 1.0, 0.0, 1.0, rise, 0) if appear else (1.0, 0.94, 1.0, 0.0, 0, rise / 2)
+    anim = QtCore.QVariantAnimation(ghost)
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.setDuration(260 if appear else 190)
+    anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic if appear else QtCore.QEasingCurve.Type.OutQuad)
+
+    def step(t):
+        ghost.scale = s0 + (s1 - s0) * t
+        ghost.opacity = o0 + (o1 - o0) * (min(t * 1.25, 1.0) if appear else t)
+        ghost.dy = d0 + (d1 - d0) * t
+        ghost.update()
+
+    def finish():
+        if appear:
+            try:
+                if on_done:
+                    on_done()
+                win.setWindowOpacity(1.0)
+                win._ghost = None
+            except RuntimeError:   # the window was deleted meanwhile
+                pass
+            QtCore.QTimer.singleShot(40, ghost.close)  # the real window is drawn before the picture goes
+        else:
+            ghost.close()
+
+    anim.valueChanged.connect(step)
+    anim.finished.connect(finish)
+    if appear:
+        win.setWindowOpacity(0.0)
+        win._ghost = ghost
+    step(0.0)
+    ghost.show()
+    ghost.repaint()
+    anim.start()
+
+
 def paint_surface(widget, has_glass, radius, surface="surface"):
     """Rounded window body: translucent tint over OS glass, or solid without glass."""
     p = QtGui.QPainter(widget)
@@ -89,10 +271,23 @@ class GlassDialog(QtWidgets.QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._has_glass:
-            self._has_glass = theme.apply_glass(self, "acrylic")
         screen = (self.parentWidget() or self).screen().availableGeometry()
         self.move(screen.center() - self.rect().center())
+        if event.spontaneous():
+            self._glass()
+        else:
+            zoom_window(self, True, on_done=self._glass)   # the glass goes on once it's in place
+
+    def _glass(self):
+        if not self._has_glass:
+            self._has_glass = theme.apply_glass(self, "acrylic")
+            self.repaint()
+
+    def done(self, result):
+        """Accept / reject / Esc: the dialog closes at once; its picture shrinks and fades."""
+        if self.isVisible():
+            zoom_window(self, False)
+        super().done(result)
 
     def paintEvent(self, event):
         paint_surface(self, self._has_glass, self.radius)
@@ -146,30 +341,29 @@ class GlassWindow(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if getattr(self, "_entrance", False):
+            self._entrance = False
+            zoom_window(self, True, origin=1.0, rise=theme.px(16), on_done=self._glass)
+        else:
+            self._glass()
+
+    def _glass(self):
         if self._glass_kind and not self._has_glass:
             self._has_glass = theme.apply_glass(self, self._glass_kind)
+            self.repaint()
 
     def paintEvent(self, event):
         paint_surface(self, self._has_glass, self.radius, self.surface)
 
-    def fade_in(self, offset=8, duration=200):
-        """One short entrance: fade and slide up a few pixels."""
-        if not animations_enabled():
-            self.show()
-            return
-        end = self.pos()
-        self.move(end + QtCore.QPoint(0, offset))
-        self.setWindowOpacity(0.0)
+    def fade_in(self):
+        """Show with an entrance: rises from the taskbar, growing as it fades in."""
+        self._entrance = True
         self.show()
-        group = QtCore.QParallelAnimationGroup(self)
-        for prop, start, stop in ((b"windowOpacity", 0.0, 1.0), (b"pos", end + QtCore.QPoint(0, offset), end)):
-            a = QtCore.QPropertyAnimation(self, prop, self)
-            a.setDuration(duration)
-            a.setStartValue(start)
-            a.setEndValue(stop)
-            a.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
-            group.addAnimation(a)
-        group.start(QtCore.QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    def closeEvent(self, event):
+        if self.isVisible():
+            zoom_window(self, False, origin=1.0, rise=theme.px(16))
+        super().closeEvent(event)
 
 
 class IconButton(QtWidgets.QPushButton):
@@ -524,5 +718,15 @@ class DatePopup(QtWidgets.QFrame):
             pos = widget.mapToGlobal(QtCore.QPoint(0, -self.height() - theme.px(4)))
         pos.setX(min(max(pos.x(), area.left()), area.right() - self.width()))
         self.move(pos)
+        self._origin = 0.0 if pos.y() > widget.mapToGlobal(QtCore.QPoint(0, 0)).y() else 1.0
         self.show()
         self.setFocus()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        zoom_window(self, True, origin=getattr(self, "_origin", 0.0))
+
+    def closeEvent(self, event):
+        if self.isVisible():
+            zoom_window(self, False, origin=getattr(self, "_origin", 0.0))
+        super().closeEvent(event)
