@@ -1,4 +1,6 @@
 ﻿.idea
+# Claude's local settings (previews, permissions)
+.claude/
 __pycache__
 *.bak
 *.tmp
