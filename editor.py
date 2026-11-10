@@ -7,7 +7,7 @@ from PyQt6 import QtCore, QtWidgets
 
 import schedule
 import theme
-from widgets import ColorSwatch, DatePopup, GlassDialog, IconButton, Segmented, divider, label
+from widgets import ColorSwatch, DatePopup, GlassDialog, IconButton, Segmented, TimePopup, divider, label
 
 REPEATS = ["once", "daily", "weekly", "monthly", "yearly"]
 CATEGORY_ICONS = {"work": "icons/work.png", "personal": "icons/home.png",
@@ -55,7 +55,14 @@ class ReminderEditor(GlassDialog):
         self.time.setDisplayFormat("HH:mm")
         self.time.setFixedWidth(theme.px(140))
         self.time.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        root.addWidget(self.time)
+        # Typing works; the clock button next to it drops down hour and minute wheels
+        time_pick = self._picker_button("clock", "Pick the time", self._pick_time)
+        time_row = QtWidgets.QHBoxLayout()
+        time_row.setSpacing(8)
+        time_row.addWidget(self.time)
+        time_row.addWidget(time_pick)
+        time_row.addStretch()
+        root.addLayout(time_row)
 
         root.addSpacing(6)
         root.addWidget(label("Repeat", "field"))
@@ -101,7 +108,8 @@ class ReminderEditor(GlassDialog):
         once_pick = self._calendar_button(lambda: self._pick_once_date())
         month_pick = self._calendar_button(lambda: self._pick_monthly_day())
         year_pick = self._calendar_button(lambda: self._pick_yearly_date())
-        self._pickers = [(once_pick, self.date), (month_pick, self.month_day), (year_pick, self.year_day)]
+        self._pickers = [(time_pick, self.time), (once_pick, self.date), (month_pick, self.month_day),
+                         (year_pick, self.year_day)]
 
         self.detail = {}
         for kind, widgets in (("once", [self.date, once_pick]), ("weekly", [self.days]),
@@ -270,25 +278,34 @@ class ReminderEditor(GlassDialog):
             data["color"] = color
         return data
 
-    # ----- picking a date in a calendar -----
+    # ----- picking a date or time in a popup -----
 
     def _calendar_button(self, handler):
-        b = IconButton("calendar", "Pick a date in the calendar", 36, 20)
+        return self._picker_button("calendar", "Pick a date in the calendar", handler)
+
+    def _picker_button(self, icon, tooltip, handler):
+        b = IconButton(icon, tooltip, 36, 20)
         b.setProperty("kind", "tool")
-        self.date.ensurePolished()
-        side = max(self.date.sizeHint().height(), theme.px(36))
+        self.time.ensurePolished()
+        side = max(self.time.sizeHint().height(), theme.px(36))
         b._side = side
         b.setFixedSize(side, side)
         b.clicked.connect(handler)
         return b
 
     def showEvent(self, event):
-        # Square calendar buttons exactly as tall as the field next to them (known once styled)
+        # Square picker buttons exactly as tall as the field next to them (known once styled)
         for button, field in self._pickers:
             side = field.sizeHint().height()
             button._side = side
             button.setFixedSize(side, side)
         super().showEvent(event)
+
+    def _pick_time(self):
+        q = self.time.time()
+        popup = TimePopup(datetime.time(q.hour(), q.minute()), self)
+        popup.picked.connect(lambda t: self.time.setTime(QtCore.QTime(t.hour, t.minute)))
+        popup.show_under(self.time)
 
     def _pick_once_date(self):
         q = self.date.date()

@@ -1,5 +1,6 @@
 """Small custom widgets for the redesigned UI (plain PyQt6, painted to match the mockup)."""
 import datetime
+import math
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -640,18 +641,51 @@ class _MonthGrid(QtWidgets.QWidget):
             self.clicked.emit(d)
 
 
-class DatePopup(QtWidgets.QFrame):
-    """Small month calendar that drops down under a calendar button. Click a day to pick it.
-    Arrows move the day, PageUp/PageDown the month, Enter picks, Esc closes."""
-    picked = QtCore.pyqtSignal(object)
+class _DropDown(QtWidgets.QFrame):
+    """Base of the small pickers that drop down under a field (date, time): rounded popup
+    surface, grows in from the field and shrinks away when closed. A click outside closes it."""
 
-    def __init__(self, date, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent, QtCore.Qt.WindowType.Popup | QtCore.Qt.WindowType.FramelessWindowHint
                          | QtCore.Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         # A click outside only closes the popup; it isn't passed on to what's underneath
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_NoMouseReplay)
+
+    def paintEvent(self, event):
+        paint_surface(self, False, theme.px(10), "popup")
+
+    def show_under(self, widget):
+        """Open below `widget` (above it if there's no room), kept on its screen."""
+        self.adjustSize()
+        area = widget.screen().availableGeometry()
+        pos = widget.mapToGlobal(QtCore.QPoint(0, widget.height() + theme.px(4)))
+        if pos.y() + self.height() > area.bottom():
+            pos = widget.mapToGlobal(QtCore.QPoint(0, -self.height() - theme.px(4)))
+        pos.setX(min(max(pos.x(), area.left()), area.right() - self.width()))
+        self.move(pos)
+        self._origin = 0.0 if pos.y() > widget.mapToGlobal(QtCore.QPoint(0, 0)).y() else 1.0
+        self.show()
+        self.setFocus()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        zoom_window(self, True, origin=getattr(self, "_origin", 0.0))
+
+    def closeEvent(self, event):
+        if self.isVisible():
+            zoom_window(self, False, origin=getattr(self, "_origin", 0.0))
+        super().closeEvent(event)
+
+
+class DatePopup(_DropDown):
+    """Small month calendar that drops down under a calendar button. Click a day to pick it.
+    Arrows move the day, PageUp/PageDown the month, Enter picks, Esc closes."""
+    picked = QtCore.pyqtSignal(object)
+
+    def __init__(self, date, parent=None):
+        super().__init__(parent)
         self.selected = date
         self.month = date.replace(day=1)
         root = QtWidgets.QVBoxLayout(self)
@@ -706,27 +740,256 @@ class DatePopup(QtWidgets.QFrame):
     def wheelEvent(self, event):
         self.shift(-1 if event.angleDelta().y() > 0 else 1)
 
+
+class _Wheel(QtWidgets.QWidget):
+    """One spinning column of TimePopup (hours or minutes). The values loop round; the chosen
+    one sits in the accent band in the middle. Turn it with the mouse wheel, drag it, or click
+    a row to bring it to the middle; Up/Down when it has the focus (its title lights up)."""
+    changed = QtCore.pyqtSignal(int)   # the value now in the band
+    ROWS = 5
+
+    def __init__(self, title, values, value, parent=None):
+        super().__init__(parent)
+        self.title = title
+        self.row_h, self.head_h = theme.px(36), theme.px(26)
+        self.setFixedSize(theme.px(104), self.head_h + self.row_h * self.ROWS)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName(title)
+        self._anim = QtCore.QVariantAnimation(self)
+        self._anim.setDuration(170)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._set_pos)
+        self._wheel_rest = 0      # touchpads send the wheel in small pieces
+        self._press = None
+        self._hover = None
+        self.set_values(values, value)
+
+    def set_values(self, values, value):
+        """Show `values`, with the one nearest to `value` in the band (no animation)."""
+        self._anim.stop()
+        self.values = list(values)
+        i = min(range(len(self.values)), key=lambda k: abs(self.values[k] - value))
+        self.pos, self.target = float(i), i
+        self.update()
+
+    def value(self):
+        return self.values[round(self.pos) % len(self.values)]
+
+    def _set_pos(self, pos):
+        before = self.value()
+        self.pos = pos
+        self.update()
+        if self.value() != before:
+            self.changed.emit(self.value())
+
+    def spin_to(self, target):
+        """Turn to row `target` (counted without wrapping, so it always takes the short way)."""
+        self.target = target
+        self._anim.stop()
+        if not animations_enabled() or not self.isVisible():
+            self._set_pos(float(target))
+            return
+        self._anim.setStartValue(self.pos)
+        self._anim.setEndValue(float(target))
+        self._anim.start()
+
+    def _mid(self):
+        return self.head_h + self.row_h * self.ROWS / 2
+
+    def _row_at(self, y):
+        """Rows from the middle band to the point `y` (0 = the band itself)."""
+        return round((y - self._mid()) / self.row_h)
+
+    # ----- mouse and keys -----
+
+    def wheelEvent(self, event):
+        self._wheel_rest += event.angleDelta().y()
+        steps = int(self._wheel_rest / 120)
+        if steps:
+            self._wheel_rest -= steps * 120
+            self.spin_to(self.target - steps)   # wheel up = earlier values come down into the band
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() != QtCore.Qt.MouseButton.LeftButton:
+            return
+        self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+        self._anim.stop()
+        self._press = (event.position().y(), self.pos, False)
+
+    def mouseMoveEvent(self, event):
+        y = event.position().y()
+        if self._press is not None and event.buttons() & QtCore.Qt.MouseButton.LeftButton:
+            start_y, start_pos, dragged = self._press
+            if dragged or abs(y - start_y) > theme.px(4):
+                self._press = (start_y, start_pos, True)
+                self._hover = None
+                self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+                self._set_pos(start_pos - (y - start_y) / self.row_h)
+            return
+        hover = self._row_at(y) if y > self.head_h else None
+        if hover != self._hover:
+            self._hover = hover
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if self._press is None:
+            return
+        dragged = self._press[2]
+        self._press = None
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        here = round(self.pos)
+        if dragged:
+            self.spin_to(here)
+        elif event.position().y() > self.head_h:
+            self.spin_to(here + self._row_at(event.position().y()))
+
+    def leaveEvent(self, event):
+        self._hover = None
+        self.update()
+
+    def keyPressEvent(self, event):
+        step = {QtCore.Qt.Key.Key_Up: -1, QtCore.Qt.Key.Key_Down: 1,
+                QtCore.Qt.Key.Key_PageUp: -3, QtCore.Qt.Key.Key_PageDown: 3}.get(event.key())
+        if step:
+            self.spin_to(self.target + step)
+        else:
+            super().keyPressEvent(event)   # Left/Right, Enter, Esc go on to the popup
+
+    def focusInEvent(self, event):
+        self.update()
+
+    def focusOutEvent(self, event):
+        self.update()
+
+    # ----- painting -----
+
     def paintEvent(self, event):
-        paint_surface(self, False, theme.px(10), "popup")
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        w = self.width()
+        p.setFont(theme.font(13, 600 if self.hasFocus() else 500))
+        p.setPen(theme.qcolor(theme.c("text" if self.hasFocus() else "muted")))
+        p.drawText(QtCore.QRectF(0, 0, w, self.head_h - theme.px(4)), int(QtCore.Qt.AlignmentFlag.AlignCenter), self.title)
+
+        body = QtCore.QRectF(0, self.head_h, w, self.row_h * self.ROWS).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = theme.px(8)
+        p.setPen(QtGui.QPen(theme.qcolor(theme.c("divider")), 1))
+        p.setBrush(theme.qcolor(theme.c("input")))
+        p.drawRoundedRect(body, radius, radius)
+        clip = QtGui.QPainterPath()
+        clip.addRoundedRect(body, radius, radius)
+        p.setClipPath(clip)
+
+        mid, rh, inset = self._mid(), self.row_h, theme.px(5)
+        band = QtCore.QRectF(inset, mid - rh / 2 + 2, w - 2 * inset, rh - 4)
+        if self._hover:   # a row you can click (the band itself needs no hover)
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(theme.qcolor(theme.c("hover")))
+            p.drawRoundedRect(band.translated(0, self._hover * rh), radius - 2, radius - 2)
+
+        n, first = len(self.values), math.floor(self.pos)
+        rows = [(first + k, mid + (first + k - self.pos) * rh) for k in range(-3, 4)]
+        p.setFont(theme.font(15, 500))
+        for i, y in rows:   # rows fade out towards the top and bottom edges
+            p.setOpacity(max(0.0, 1.0 - abs(i - self.pos) * 0.3))
+            p.setPen(theme.qcolor(theme.c("text")))
+            p.drawText(QtCore.QRectF(0, y - rh / 2, w, rh), int(QtCore.Qt.AlignmentFlag.AlignCenter),
+                       f"{self.values[i % n]:02d}")
+        p.setOpacity(1.0)
+
+        # The band, with the numbers passing through it drawn again on top of it
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(theme.qcolor(theme.c("accent")))
+        p.drawRoundedRect(band, radius - 2, radius - 2)
+        inside = QtGui.QPainterPath()
+        inside.addRoundedRect(band, radius - 2, radius - 2)
+        p.setClipPath(inside)
+        p.setFont(theme.font(15, 650))
+        p.setPen(theme.qcolor(theme.c("on_accent")))
+        for i, y in rows:
+            p.drawText(QtCore.QRectF(0, y - rh / 2, w, rh), int(QtCore.Qt.AlignmentFlag.AlignCenter),
+                       f"{self.values[i % n]:02d}")
+        p.end()
+
+
+class TimePopup(_DropDown):
+    """Drops down under the Time field: two spinning columns, hours and minutes, minutes in
+    5-minute steps or every minute. The field follows along as they turn; ✓, Enter or a click
+    outside keeps the time, ✕ or Esc puts the old one back. Left/Right switch columns."""
+    picked = QtCore.pyqtSignal(object)   # datetime.time, on every change
+
+    def __init__(self, time, parent=None):
+        super().__init__(parent)
+        self.original = time
+        step = 5 if time.minute % 5 == 0 else 1
+        root = QtWidgets.QVBoxLayout(self)
+        m = theme.px(12)
+        root.setContentsMargins(m, theme.px(8), m, m)
+        root.setSpacing(theme.px(10))
+        cols = QtWidgets.QHBoxLayout()
+        cols.setSpacing(theme.px(8))
+        self.hours = _Wheel("Hour", range(24), time.hour)
+        self.minutes = _Wheel("Minute", range(0, 60, step), time.minute)
+        for wheel in (self.hours, self.minutes):
+            wheel.changed.connect(self._emit)
+            cols.addWidget(wheel)
+        root.addLayout(cols)
+
+        bottom = QtWidgets.QHBoxLayout()
+        bottom.setSpacing(theme.px(6))
+        self.steps = Segmented(["5 min", "1 min"])
+        for b in self.steps.group.buttons():
+            b.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.steps.set_index(0 if step == 5 else 1)
+        self.steps.changed.connect(self._set_step)
+        self.steps.setToolTip("Minutes in 5-minute steps, or every minute")
+        bottom.addWidget(self.steps)
+        bottom.addStretch()
+        side = theme.px(38)
+        cancel = IconButton("close", "Cancel (Esc)", 38, 18)
+        cancel.setProperty("kind", "tool")
+        cancel.setFixedSize(side, side)
+        cancel.clicked.connect(self.cancel)
+        ok = IconButton("check", "Done (Enter)", 38, 20, color=theme.c("on_accent"))
+        ok.setFixedSize(side, side)
+        ok.setStyleSheet(f"QPushButton {{ background: {theme.c('accent')}; border: none; border-radius: 10px; }}"
+                         f"QPushButton:hover {{ background: {theme.c('accent_hover')}; }}")
+        ok.clicked.connect(self.close)
+        for b in (cancel, ok):
+            b.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)   # the keys stay with the columns
+            bottom.addWidget(b)
+        root.addLayout(bottom)
+
+    def value(self):
+        return datetime.time(self.hours.value(), self.minutes.value())
+
+    def _emit(self, _=None):
+        self.picked.emit(self.value())
+
+    def _set_step(self, i):
+        minute = self.minutes.value()
+        self.minutes.set_values(range(0, 60, 5 if i == 0 else 1), minute)
+        if self.minutes.value() != minute:
+            self._emit()
+
+    def cancel(self):
+        self.picked.emit(self.original)
+        self.close()
 
     def show_under(self, widget):
-        """Open below `widget` (above it if there's no room), kept on its screen."""
-        self.adjustSize()
-        area = widget.screen().availableGeometry()
-        pos = widget.mapToGlobal(QtCore.QPoint(0, widget.height() + theme.px(4)))
-        if pos.y() + self.height() > area.bottom():
-            pos = widget.mapToGlobal(QtCore.QPoint(0, -self.height() - theme.px(4)))
-        pos.setX(min(max(pos.x(), area.left()), area.right() - self.width()))
-        self.move(pos)
-        self._origin = 0.0 if pos.y() > widget.mapToGlobal(QtCore.QPoint(0, 0)).y() else 1.0
-        self.show()
-        self.setFocus()
+        super().show_under(widget)
+        self.hours.setFocus()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        zoom_window(self, True, origin=getattr(self, "_origin", 0.0))
-
-    def closeEvent(self, event):
-        if self.isVisible():
-            zoom_window(self, False, origin=getattr(self, "_origin", 0.0))
-        super().closeEvent(event)
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Right):
+            (self.hours if key == QtCore.Qt.Key.Key_Left else self.minutes).setFocus()
+        elif key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            self.close()
+        elif key == QtCore.Qt.Key.Key_Escape:
+            self.cancel()
+        else:
+            super().keyPressEvent(event)
