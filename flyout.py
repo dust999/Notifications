@@ -8,7 +8,7 @@ from PyQt6 import QtCore, QtWidgets
 
 import schedule
 import theme
-from widgets import CategoryBadge, ElidedLabel, GlassWindow, IconButton, NextUpGlow, confirm, divider, label
+from widgets import CategoryBadge, ElidedLabel, GlassWindow, IconButton, NextUpGlow, TabStrip, confirm, crossfade, divider, label
 
 GROUPS = ["Today", "Tomorrow", "This week", "Later"]
 
@@ -133,9 +133,11 @@ class RemindersFlyout(GlassWindow):
         root.addWidget(self.next_box)
         root.addSpacing(10)
 
-        tabs = QtWidgets.QHBoxLayout()
-        tabs.setSpacing(theme.px(22))
         self.tab_group = QtWidgets.QButtonGroup(self)
+        strip = TabStrip(self.tab_group)   # draws the accent line under the picked tab, sliding
+        tabs = QtWidgets.QHBoxLayout(strip)
+        tabs.setContentsMargins(0, 0, 0, 0)
+        tabs.setSpacing(theme.px(22))
         self.counts = []
         for i, name in enumerate(("Upcoming", "Done today")):
             box = QtWidgets.QHBoxLayout()
@@ -145,6 +147,7 @@ class RemindersFlyout(GlassWindow):
             b.setCheckable(True)
             b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             self.tab_group.addButton(b, i)
+            strip.watch(b)
             count = label("0", "count")
             self.counts.append(count)
             b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
@@ -155,7 +158,7 @@ class RemindersFlyout(GlassWindow):
         tabs.addStretch()
         self.tab_group.button(0).setChecked(True)
         self.tab_group.idClicked.connect(self._switch_tab)
-        root.addLayout(tabs)
+        root.addWidget(strip)
         root.addWidget(divider())
         root.addSpacing(theme.px(4))
 
@@ -264,7 +267,10 @@ class RemindersFlyout(GlassWindow):
     # ----- actions -----
 
     def _switch_tab(self, i):
+        if i == self.tab:
+            return
         self.tab = i
+        crossfade(self.scroll)   # the old list fades out over the new one
         self.refresh()
 
     def _delete(self, reminder):

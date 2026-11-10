@@ -342,11 +342,11 @@ def stylesheet():
     QFrame#segmented {{ background: {t['chip']}; border: 1px solid {t['divider']}; border-radius: 8px; }}
     QPushButton[kind="segment"] {{ font-size: {S(13)}; font-weight: 500; min-height: {S(30)}; padding: 0 8px;
         border: none; border-radius: 6px; background: transparent; color: {t['text2']}; }}
-    QPushButton[kind="segment"]:checked {{ background: {t['selected']}; color: {t['text']}; font-weight: 600; }}
+    QPushButton[kind="segment"]:checked {{ background: transparent; color: {t['text']}; font-weight: 600; }}
     QPushButton[kind="tab"] {{ font-size: {S(14)}; font-weight: 500; min-height: {S(34)}; padding: 0 2px;
         border: none; border-radius: 0; background: transparent; color: {t['text2']};
         border-bottom: 2px solid transparent; }}
-    QPushButton[kind="tab"]:checked {{ color: {t['text']}; font-weight: 600; border-bottom: 2px solid {t['accent']}; }}
+    QPushButton[kind="tab"]:checked {{ color: {t['text']}; font-weight: 600; }}  /* the line: TabStrip */
     QPushButton[kind="tab"]:hover {{ color: {t['text']}; }}
     QPushButton:focus {{ outline: none; border: 1px solid {t['accent']}; }}
     QPushButton[kind="tab"]:focus {{ border: none; border-bottom: 2px solid {t['accent']}; }}

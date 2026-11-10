@@ -10,7 +10,7 @@ from reminder_check import ReminderChecker
 from editor import ReminderEditor
 from flyout import RemindersFlyout
 from calendar_window import CalendarWindow
-from widgets import app_quitting, close_now
+from widgets import app_quitting, appear_now, close_now, is_quitting
 import autostart
 import schedule
 import theme
@@ -79,7 +79,7 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger:
             self.show_reminder_list()
 
-    def show_reminder_list(self, animate=True):
+    def show_reminder_list(self, entrance=True):
         """Toggle the flyout above the tray."""
         if self.flyout is not None:
             self.flyout.close()
@@ -88,10 +88,8 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         self.flyout = flyout
         flyout.destroyed.connect(lambda _=None, f=flyout: self._forget_flyout(f))
         flyout.place(self.geometry())
-        if animate:
-            flyout.fade_in()
-        else:
-            flyout.show()
+        flyout.entrance = entrance
+        flyout.show()
         flyout.raise_()
         flyout.activateWindow()
 
@@ -104,8 +102,8 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
         if self.flyout is None:
             return
         old, self.flyout = self.flyout, None
-        close_now(old)  # the new copy appears in its place: no fade
-        self.show_reminder_list(animate=False)
+        close_now(old)
+        self.show_reminder_list(entrance=False)   # the new copy appears in its place
 
     def preview_appearance(self, mode, palette, text_size):
         """Apply theme, color and text size right away (Settings calls this on every change)."""
@@ -126,23 +124,39 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
     # ---------- calendar ----------
 
     def show_calendar(self, view=None, date=None):
-        """Open the calendar window, or bring it to the front if it's already open."""
-        if self.flyout is not None:
-            self.flyout.close()
+        """Open the calendar window, or bring it to the front if it's already open.
+        From the flyout: the flyout stays until the calendar is on screen, then goes in the
+        same moment (no empty gap); closing the calendar brings the flyout back."""
+        flyout = self.flyout if self.flyout is not None and self.flyout.isVisible() else None
         if self.calendar is None:
             window = CalendarWindow(self)
             self.calendar = window
             window.destroyed.connect(lambda _=None, w=window: self._forget_calendar(w))
-            if view:
-                window.set_view(view, date)
-            window.show()
-        self.calendar.showNormal()
-        self.calendar.raise_()
-        self.calendar.activateWindow()
+        window = self.calendar
+        if view:
+            window.set_view(view, date)
+        window.back_to_flyout = flyout is not None
+        if flyout is not None:
+            if window.isVisible():
+                close_now(flyout)
+            else:   # the flyout goes the moment the calendar is on screen
+                window.on_shown = lambda: close_now(flyout) if self.flyout is flyout else None
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
 
     def _forget_calendar(self, window):
         if self.calendar is window:
             self.calendar = None
+
+    def calendar_closing(self, window):
+        """The user closes the calendar: if it was opened from the flyout, the flyout is put
+        back first, so there is no moment with neither on screen."""
+        if (getattr(window, "back_to_flyout", False) and getattr(window, "_close_state", None) != "now"
+                and not is_quitting() and self.flyout is None):
+            self.show_reminder_list(entrance=False)   # just there, in place of the calendar
+            if self.flyout is not None:
+                appear_now(self.flyout)   # on screen before the calendar goes
 
     def rebuild_calendar(self):
         """Re-create the open calendar (new text size), keeping its view and date."""
@@ -150,9 +164,18 @@ class NotifyApp(QtWidgets.QSystemTrayIcon):
             return
         old, self.calendar = self.calendar, None
         view, date, geometry = old.view, old.date, old.geometry()
-        old.close()
-        self.show_calendar(view, date)
-        self.calendar.setGeometry(geometry)
+        back_to_flyout, shown = getattr(old, "back_to_flyout", False), old.isVisible()
+        close_now(old)
+        old.deleteLater()
+        if not shown:
+            return   # a hidden calendar is simply made again next time
+        window = CalendarWindow(self)
+        self.calendar = window
+        window.destroyed.connect(lambda _=None, w=window: self._forget_calendar(w))
+        window.set_view(view, date)
+        window.setGeometry(geometry)
+        window.back_to_flyout = back_to_flyout
+        window.show()
 
     # ---------- editing ----------
 

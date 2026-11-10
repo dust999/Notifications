@@ -3,7 +3,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 import schedule
 import theme
-from widgets import CategoryBadge, close_with_fade, fade_window, label
+from widgets import CategoryBadge, label, zoom_in
 
 
 class FullscreenReminder(QtWidgets.QWidget):
@@ -68,7 +68,6 @@ class FullscreenReminder(QtWidgets.QWidget):
         done.setFocus()
 
     def show(self):
-        fade_window(self, True, 0, 240)
         super().show()
         self.raise_()
         self.activateWindow()
@@ -77,6 +76,8 @@ class FullscreenReminder(QtWidgets.QWidget):
         super().showEvent(event)
         if not self._has_glass:
             self._has_glass = theme.apply_glass(self, "acrylic")
+        if not event.spontaneous():
+            zoom_in(self, start_scale=1.0, duration=240)   # a plain fade in
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
@@ -96,7 +97,5 @@ class FullscreenReminder(QtWidgets.QWidget):
             super().keyPressEvent(event)
 
     def closeEvent(self, event):
-        if close_with_fade(self, event, offset=0):
-            return
         self.closed.emit()
         super().closeEvent(event)

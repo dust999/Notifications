@@ -7,7 +7,7 @@ from PyQt6 import QtCore, QtWidgets
 
 import schedule
 import theme
-from widgets import ColorSwatch, DatePopup, GlassDialog, IconButton, Segmented, TimePopup, divider, label
+from widgets import ColorSwatch, DatePopup, GlassDialog, IconButton, Segmented, Switcher, TimePopup, divider, fade_checked, label
 
 REPEATS = ["once", "daily", "weekly", "monthly", "yearly"]
 CATEGORY_ICONS = {"work": "icons/work.png", "personal": "icons/home.png",
@@ -84,6 +84,7 @@ class ReminderEditor(GlassDialog):
         for i, name in enumerate(schedule.WEEKDAYS):
             b = QtWidgets.QPushButton(name)
             b.setProperty("kind", "chip")
+            fade_checked(b)   # switching on and off fades
             # Focus only from the keyboard: a clicked chip kept the focus border, which looks
             # exactly like "selected", so a chip switched off still seemed on
             b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
@@ -111,7 +112,9 @@ class ReminderEditor(GlassDialog):
         self._pickers = [(time_pick, self.time), (once_pick, self.date), (month_pick, self.month_day),
                          (year_pick, self.year_day)]
 
-        self.detail = {}
+        # The fields of the chosen repeat; switching cross-fades them and eases the height
+        self.detail = Switcher()
+        self.detail.resized.connect(self._fit)
         for kind, widgets in (("once", [self.date, once_pick]), ("weekly", [self.days]),
                               ("monthly", [self.month_day, month_pick, self.month_note]),
                               ("yearly", [self.year_month, self.year_day, year_pick])):
@@ -123,8 +126,8 @@ class ReminderEditor(GlassDialog):
                 lay.addWidget(w)
             if kind != "weekly":
                 lay.addStretch()
-            self.detail[kind] = box
-            root.addWidget(box)
+            self.detail.add(kind, box)
+        root.addWidget(self.detail)
 
         root.addSpacing(6)
         root.addWidget(label("Category", "field"))
@@ -134,6 +137,7 @@ class ReminderEditor(GlassDialog):
         for i, cat in enumerate(schedule.CATEGORIES):
             b = QtWidgets.QPushButton(schedule.CATEGORY_NAMES[cat])
             b.setProperty("kind", "chip")
+            fade_checked(b)   # switching on and off fades
             # Focus only from the keyboard: a clicked chip kept the focus border, which looks
             # exactly like "selected", so a chip switched off still seemed on
             b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
@@ -176,6 +180,7 @@ class ReminderEditor(GlassDialog):
         for days in schedule.LEAD_DAYS:
             b = QtWidgets.QPushButton(schedule.lead_label(days))
             b.setProperty("kind", "chip")
+            fade_checked(b)   # switching on and off fades
             # Focus only from the keyboard: a clicked chip kept the focus border, which looks
             # exactly like "selected", so a chip switched off still seemed on
             b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
@@ -186,7 +191,11 @@ class ReminderEditor(GlassDialog):
             leads.addWidget(b)
         leads.addStretch()
         eb.addLayout(leads)
-        root.addWidget(self.earlier_box)
+        # Shown only for repeats that allow heads-ups: it opens and closes the same smooth way
+        self.earlier = Switcher()
+        self.earlier.add("shown", self.earlier_box)
+        self.earlier.resized.connect(self._fit)
+        root.addWidget(self.earlier)
 
         root.addSpacing(10)
         root.addWidget(divider())
@@ -339,9 +348,7 @@ class ReminderEditor(GlassDialog):
 
     def _show_details(self):
         kind = REPEATS[self.repeat.index()]
-        for k, box in self.detail.items():
-            box.setVisible(k == kind)
-        self.adjustSize()
+        self.detail.show_page(kind if kind in self.detail.pages else None)
         self._update_preview()
 
     def _update_earlier(self):
@@ -355,9 +362,7 @@ class ReminderEditor(GlassDialog):
                 button.blockSignals(True)
                 button.setChecked(False)  # no longer fits (e.g. "1 month" for a monthly reminder)
                 button.blockSignals(False)
-        if self.earlier_box.isHidden() == bool(allowed):
-            self.earlier_box.setVisible(bool(allowed))
-            self._fit_later()
+        self.earlier.show_page("shown" if allowed else None)
 
     def _update_preview(self):
         self._update_earlier()

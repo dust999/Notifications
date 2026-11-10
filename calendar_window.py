@@ -12,7 +12,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 import schedule
 import theme
-from widgets import IconButton, Segmented, animations_enabled, label, paint_surface, zoom_window
+from widgets import IconButton, Segmented, animations_enabled, appear_when_drawn, label, paint_surface, zoom_in
 
 MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
                "August", "September", "October", "November", "December"]
@@ -806,8 +806,6 @@ class DayCard(QtWidgets.QFrame):
         self.close()
 
     def closeEvent(self, event):
-        if self.isVisible():
-            zoom_window(self, False, origin=0.0)
         self.closed.emit()
         super().closeEvent(event)
 
@@ -826,7 +824,7 @@ class DayCard(QtWidgets.QFrame):
 
     def showEvent(self, event):
         super().showEvent(event)
-        zoom_window(self, True, origin=0.0)
+        zoom_in(self, origin=0.0)
 
 
 class SlidingTitle(QtWidgets.QLabel):
@@ -916,7 +914,7 @@ class CalendarWindow(QtWidgets.QWidget):
     def __init__(self, app):
         super().__init__(None, QtCore.Qt.WindowType.Window)
         self.app = app
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        # Closing only hides it: opened again, it is there at once (making a window takes a while)
         self.setWindowTitle("Notify calendar")
         px = theme.px
         self.setMinimumSize(px(720), px(520))
@@ -996,6 +994,9 @@ class CalendarWindow(QtWidgets.QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         theme.style_title_bar(self)
+        if not event.spontaneous():
+            on_shown, self.on_shown = getattr(self, "on_shown", None), None
+            appear_when_drawn(self, on_shown)   # all at once, not white or gray first
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
@@ -1094,6 +1095,7 @@ class CalendarWindow(QtWidgets.QWidget):
     def closeEvent(self, event):
         if self.editor is not None:
             self.editor.reject()
+        self.app.calendar_closing(self)   # back to the flyout (shown before this goes: no gap)
         super().closeEvent(event)
 
     def refresh(self):

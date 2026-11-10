@@ -74,73 +74,83 @@ def app_quitting():
     _quitting = True
 
 
-def fade_window(win, appear, offset=8, duration=None, on_done=None):
-    """Fade a top-level window in (sliding `offset` px into place) or out (sliding half of
-    that away). `on_done` runs when it ends. Without animations it runs at once."""
-    old = getattr(win, "_fade_anim", None)
-    if old is not None:
-        old.stop()
-    if not animations_enabled():
-        win.setWindowOpacity(1.0 if appear else 0.0)
-        if on_done:
-            on_done()
-        return
-    duration = duration or (190 if appear else 140)
-    here = win.pos()
-    if appear:
-        start_pos, end_pos, start_op, end_op = here + QtCore.QPoint(0, offset), here, 0.0, 1.0
-        win.move(start_pos)
-        win.setWindowOpacity(0.0)
-    else:
-        start_pos, end_pos, start_op, end_op = here, here + QtCore.QPoint(0, offset // 2), win.windowOpacity(), 0.0
-    group = QtCore.QParallelAnimationGroup(win)
-    for prop, start, stop in ((b"windowOpacity", start_op, end_op), (b"pos", start_pos, end_pos)):
-        if prop == b"pos" and not offset:
-            continue
-        a = QtCore.QPropertyAnimation(win, prop, group)
-        a.setDuration(duration)
-        a.setStartValue(start)
-        a.setEndValue(stop)
-        a.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic if appear else QtCore.QEasingCurve.Type.InCubic)
-        group.addAnimation(a)
-    if on_done:
-        group.finished.connect(on_done)
-    win._fade_anim = group
-    group.start()
-
-
-def close_with_fade(win, event, offset=8):
-    """For closeEvent: the first close() fades the window out and closes it for real afterwards.
-    Returns True when the event was put off (the caller returns at once)."""
-    state = getattr(win, "_close_state", None)
-    if state == "closing":
-        event.ignore()          # already fading out: the second close() comes when it ends
-        return True
-    if state == "now" or _quitting or not win.isVisible() or not animations_enabled():
-        return False
-    win._close_state = "closing"
-    event.ignore()
-
-    def finish():
-        win._close_state = "now"
-        win.close()
-    fade_window(win, False, offset, on_done=finish)
-    return True
+def is_quitting():
+    return _quitting
 
 
 def close_now(win):
-    """Close without an exit animation (a window replaced by a new copy of itself)."""
+    """Close a window that a new copy of itself replaces (it brings nothing back on closing)."""
     win._close_state = "now"
     win.close()
 
 
-_ghosts = set()   # pictures still playing; Python must hold them or they vanish mid-animation
+def no_os_animation(win):
+    """Windows fades windows in and out on its own: off, so ours appear and go in one frame."""
+    try:
+        import ctypes
+        on = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(int(win.winId()), 3, ctypes.byref(on), ctypes.sizeof(on))
+    except (OSError, AttributeError):
+        pass
+
+
+def _next_frame():
+    """Block until Windows has put the next frame on screen."""
+    try:
+        import ctypes
+        ctypes.windll.dwmapi.DwmFlush()
+    except (OSError, AttributeError):
+        pass
+
+
+def wait_until_on_screen(win, limit_ms=120):
+    """For a window just shown: return once it is really on screen. Windows reports a new
+    window visible a moment after show(), and only then can Qt draw it."""
+    handle = win.windowHandle()
+    clock = QtCore.QElapsedTimer()
+    clock.start()
+    while handle is not None and not handle.isExposed() and clock.elapsed() < limit_ms:
+        QtCore.QCoreApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents, 5)
+    win.repaint()
+    _next_frame()
+
+
+def appear_when_drawn(win, on_shown=None):
+    """Call from showEvent. The window appears all at once, with no animation: it stays
+    invisible until Windows has drawn it completely, then shows in one step. Shown plainly,
+    a window first blinks gray or white (its glass or frame comes a frame before our content).
+    `on_shown` runs once it is on screen (e.g. hide the window it replaces)."""
+    no_os_animation(win)
+    win.setWindowOpacity(0.0)
+    win._on_shown = on_shown
+    QtCore.QTimer.singleShot(0, lambda: appear_now(win))
+
+
+def appear_now(win):
+    """Finish appear_when_drawn right away (when the caller must know the window is up)."""
+    try:
+        if getattr(win, "_on_shown", False) is False:
+            return   # already done
+        on_shown, win._on_shown = win._on_shown, False
+        if win.isVisible():
+            wait_until_on_screen(win)
+            _next_frame()          # the glass backdrop needs one more
+        win.setWindowOpacity(1.0)
+        if win.isVisible():
+            _next_frame()
+        if on_shown:
+            on_shown()
+    except RuntimeError:   # deleted meanwhile
+        pass
+
+
+_ghosts = set()   # entrances still playing; Python must hold them or they vanish mid-animation
 
 
 class _Ghost(QtWidgets.QWidget):
     """A picture of a window in a see-through window of its own, drawn zoomed and faded.
-    Entrances and exits play on it, so the real window never has to be scaled: while it comes
-    in, the real window is there but invisible; on the way out the real one is already gone."""
+    The entrance plays on it, so the real window never has to be scaled: meanwhile the real
+    window is there, but invisible."""
 
     def __init__(self, picture, geometry, origin, radius=None):
         super().__init__(None, QtCore.Qt.WindowType.FramelessWindowHint | QtCore.Qt.WindowType.Tool
@@ -154,7 +164,7 @@ class _Ghost(QtWidgets.QWidget):
         self.setGeometry(geometry.adjusted(-self.pad, -self.pad, self.pad, self.pad))
         self.picture, self.origin = picture, origin
         self.radius = radius   # rounded windows get a soft shadow, like the one Windows gives them
-        self.scale, self.opacity, self.dy = 1.0, 1.0, 0.0
+        self.scale, self.opacity, self.dy = 1.0, 0.0, 0.0
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
@@ -169,9 +179,8 @@ class _Ghost(QtWidgets.QWidget):
         if self.radius is not None:
             p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
             p.setPen(QtCore.Qt.PenStyle.NoPen)
-            steps = 12
-            for i in range(1, steps + 1):
-                p.setBrush(QtGui.QColor(0, 0, 0, round(9 * (1 - i / (steps + 1)) ** 2)))
+            for i in range(2, 13, 2):
+                p.setBrush(QtGui.QColor(0, 0, 0, round(12 * (1 - i / 14) ** 2)))
                 p.drawRoundedRect(body.adjusted(-i, -i + 2, i, i + 2), self.radius + i, self.radius + i)
         p.drawPixmap(body.topLeft(), self.picture)
         p.end()
@@ -189,58 +198,51 @@ def _picture(win):
         win._has_glass = glass
 
 
-def zoom_window(win, appear, origin=0.5, rise=0, on_done=None):
-    """Entrance: the window grows from a bit smaller (and `rise` px lower) while it fades in.
-    Exit: it shrinks a little and fades out. `origin` is the point it grows from, as a share
-    of its height: 0 top, 0.5 middle, 1 bottom. Call it from showEvent (the window is about to
-    appear) or right before the window hides. `on_done` runs once the real window is shown."""
-    old = getattr(win, "_ghost", None)
-    if old is not None:
-        try:
-            old.close()
-        except RuntimeError:
-            pass
-        win._ghost = None
-    if _quitting or not animations_enabled() or getattr(win, "_close_state", None) == "now":
-        if on_done:
-            on_done()
+def zoom_in(win, origin=0.5, rise=0, start_scale=0.9, duration=260):
+    """Call from showEvent: the window grows from a bit smaller (and `rise` px lower) while it
+    fades in. `origin` is the point it grows from, as a share of its height: 0 top, 0.5 middle,
+    1 bottom. Windows close at once, with no animation."""
+    if _quitting or not animations_enabled():
+        appear_when_drawn(win)
         return
+    no_os_animation(win)
+    win.setWindowOpacity(0.0)   # there (and drawn, glass and all), but unseen until the end
+    win._on_shown = False
     shadow = not win.windowFlags() & QtCore.Qt.WindowType.NoDropShadowWindowHint
     ghost = _Ghost(_picture(win), win.geometry(), origin, getattr(win, "radius", 8) if shadow else None)
     _ghosts.add(ghost)
     ghost.destroyed.connect(lambda _=None, g=ghost: _ghosts.discard(g))
-    s0, s1, o0, o1, d0, d1 = (0.9, 1.0, 0.0, 1.0, rise, 0) if appear else (1.0, 0.94, 1.0, 0.0, 0, rise / 2)
+    no_os_animation(ghost)
     anim = QtCore.QVariantAnimation(ghost)
     anim.setStartValue(0.0)
     anim.setEndValue(1.0)
-    anim.setDuration(260 if appear else 190)
-    anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic if appear else QtCore.QEasingCurve.Type.OutQuad)
+    anim.setDuration(duration)
+    anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+
+    def gone():
+        try:
+            return not win.isVisible()
+        except RuntimeError:   # deleted
+            return True
 
     def step(t):
-        ghost.scale = s0 + (s1 - s0) * t
-        ghost.opacity = o0 + (o1 - o0) * (min(t * 1.25, 1.0) if appear else t)
-        ghost.dy = d0 + (d1 - d0) * t
+        if gone():   # closed before the entrance ended: the picture goes with it
+            anim.stop()
+            ghost.close()
+            return
+        ghost.scale = start_scale + (1 - start_scale) * t
+        ghost.opacity = min(t * 1.25, 1.0)
+        ghost.dy = rise * (1 - t)
         ghost.update()
 
     def finish():
-        if appear:
-            try:
-                if on_done:
-                    on_done()
-                win.setWindowOpacity(1.0)
-                win._ghost = None
-            except RuntimeError:   # the window was deleted meanwhile
-                pass
-            QtCore.QTimer.singleShot(40, ghost.close)  # the real window is drawn before the picture goes
-        else:
-            ghost.close()
+        if not gone():
+            win.setWindowOpacity(1.0)
+            _next_frame()   # the real window is on screen before the picture goes
+        ghost.close()
 
     anim.valueChanged.connect(step)
     anim.finished.connect(finish)
-    if appear:
-        win.setWindowOpacity(0.0)
-        win._ghost = ghost
-    step(0.0)
     ghost.show()
     ghost.repaint()
     anim.start()
@@ -260,6 +262,126 @@ def paint_surface(widget, has_glass, radius, surface="surface"):
     p.end()
 
 
+class Switcher(QtWidgets.QWidget):
+    """Shows one of its pages (or none). Switching fades the old page out and the new one in
+    while the height eases to the new page's, quickly. Switching again midway carries on from
+    wherever things are. `resized` is sent on every step, so the window can follow."""
+    resized = QtCore.pyqtSignal()
+    DURATION = 180
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.pages, self.effects = {}, {}
+        self.current = None
+        self.height_now = 0.0
+        self.anim = QtCore.QVariantAnimation(self)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setDuration(self.DURATION)
+        self.anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self.anim.valueChanged.connect(self._step)
+        self.anim.finished.connect(self._settle)
+
+    def add(self, key, page):
+        page.setParent(self)
+        effect = QtWidgets.QGraphicsOpacityEffect(page)
+        effect.setOpacity(0.0)
+        page.setGraphicsEffect(effect)
+        page.hide()
+        page.installEventFilter(self)
+        self.pages[key], self.effects[key] = page, effect
+
+    def eventFilter(self, obj, event):
+        # a page whose own content changed size (styled on first show, rows hidden): follow it
+        if (event.type() == QtCore.QEvent.Type.LayoutRequest and obj is self.pages.get(self.current)
+                and self.anim.state() != QtCore.QAbstractAnimation.State.Running):
+            QtCore.QTimer.singleShot(0, self._refit)
+        return False
+
+    def _refit(self):
+        if self.anim.state() == QtCore.QAbstractAnimation.State.Running:
+            return
+        height = self.page_height(self.current)
+        page = self.pages.get(self.current)
+        if page is not None:
+            self._place(page, self.current)
+        if height != round(self.height_now):
+            self.height_now = height
+            self.updateGeometry()
+            self.resized.emit()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refit()   # sizes are right only once styled
+
+    def page_height(self, key):
+        page = self.pages.get(key)
+        if page is None:
+            return 0
+        if page.hasHeightForWidth() and self.width() > 0:
+            return page.heightForWidth(self.width())
+        return page.sizeHint().height()
+
+    def sizeHint(self):
+        width = max([p.sizeHint().width() for p in self.pages.values()] or [0])
+        return QtCore.QSize(width, round(self.height_now))
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(0, round(self.height_now))
+
+    def show_page(self, key, animate=True):
+        if key == self.current and self.anim.state() != QtCore.QAbstractAnimation.State.Running:
+            return
+        self.current = key
+        page = self.pages.get(key)
+        if page is not None:
+            page.show()
+            page.raise_()
+            self._place(page, key)
+        self.from_height, self.to_height = self.height_now, self.page_height(key)
+        self.from_opacity = {k: e.opacity() for k, e in self.effects.items()}
+        self.anim.stop()
+        if animate and animations_enabled() and self.window().isVisible():
+            for e in self.effects.values():
+                e.setEnabled(True)
+            self.anim.start()
+        else:
+            self._step(1.0)
+            self._settle()
+
+    def _step(self, t):
+        self.height_now = self.from_height + (self.to_height - self.from_height) * t
+        for key, effect in self.effects.items():
+            goal = 1.0 if key == self.current else 0.0
+            start = self.from_opacity.get(key, 0.0)
+            # the old page is gone by mid-way, the new one comes in over the whole time
+            share = min(t * 2, 1.0) if goal == 0.0 else t
+            effect.setOpacity(start + (goal - start) * share)
+        self.updateGeometry()
+        self.resized.emit()
+
+    def _settle(self):
+        for key, page in self.pages.items():
+            if key == self.current:
+                self.effects[key].setOpacity(1.0)
+                self.effects[key].setEnabled(False)   # drawn directly again: crisp, no extra work
+            else:
+                self.effects[key].setOpacity(0.0)
+                page.hide()
+        self.height_now = self.page_height(self.current)
+        self.updateGeometry()
+        self.resized.emit()
+
+    def _place(self, page, key):
+        page.setGeometry(0, 0, self.width(), self.page_height(key))
+
+    def resizeEvent(self, event):
+        for key, page in self.pages.items():
+            self._place(page, key)
+        super().resizeEvent(event)
+
+
 class GlassDialog(QtWidgets.QDialog):
     """Modal version of GlassWindow (editor, confirmations)."""
 
@@ -274,21 +396,14 @@ class GlassDialog(QtWidgets.QDialog):
         super().showEvent(event)
         screen = (self.parentWidget() or self).screen().availableGeometry()
         self.move(screen.center() - self.rect().center())
-        if event.spontaneous():
-            self._glass()
-        else:
-            zoom_window(self, True, on_done=self._glass)   # the glass goes on once it's in place
+        self._glass()
+        if not event.spontaneous():
+            zoom_in(self)
 
     def _glass(self):
         if not self._has_glass:
             self._has_glass = theme.apply_glass(self, "acrylic")
             self.repaint()
-
-    def done(self, result):
-        """Accept / reject / Esc: the dialog closes at once; its picture shrinks and fades."""
-        if self.isVisible():
-            zoom_window(self, False)
-        super().done(result)
 
     def paintEvent(self, event):
         paint_surface(self, self._has_glass, self.radius)
@@ -342,11 +457,12 @@ class GlassWindow(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if getattr(self, "_entrance", False):
-            self._entrance = False
-            zoom_window(self, True, origin=1.0, rise=theme.px(16), on_done=self._glass)
-        else:
-            self._glass()
+        self._glass()
+        if not event.spontaneous():
+            if getattr(self, "entrance", True):
+                zoom_in(self, origin=1.0, rise=theme.px(16))
+            else:
+                appear_when_drawn(self)
 
     def _glass(self):
         if self._glass_kind and not self._has_glass:
@@ -356,15 +472,6 @@ class GlassWindow(QtWidgets.QWidget):
     def paintEvent(self, event):
         paint_surface(self, self._has_glass, self.radius, self.surface)
 
-    def fade_in(self):
-        """Show with an entrance: rises from the taskbar, growing as it fades in."""
-        self._entrance = True
-        self.show()
-
-    def closeEvent(self, event):
-        if self.isVisible():
-            zoom_window(self, False, origin=1.0, rise=theme.px(16))
-        super().closeEvent(event)
 
 
 class IconButton(QtWidgets.QPushButton):
@@ -417,8 +524,154 @@ class CategoryBadge(QtWidgets.QWidget):
         p.end()
 
 
+def _mix(a, b, t):
+    """Color between a (t=0) and b (t=1)."""
+    a, b = QtGui.QColor(a), QtGui.QColor(b)
+    return QtGui.QColor.fromRgbF(*(x + (y - x) * t for x, y in zip(a.getRgbF(), b.getRgbF())))
+
+
+class _CheckedGlow(QtCore.QObject):
+    """Makes a chip's accent (border and text color) fade in when it is switched on and out
+    when off; switched again midway, it turns back from where it is. While it fades, the chip
+    gets the in-between colors itself, so there is still one label, drawn by the chip."""
+
+    def __init__(self, button, off, on, edge):
+        super().__init__(button)
+        self.button = button
+        self.off, self.on, self.edge = off, on, edge
+        self.level = 1.0 if button.isChecked() else 0.0
+        self.anim = QtCore.QVariantAnimation(self)
+        self.anim.setDuration(170)
+        self.anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self.anim.valueChanged.connect(self._paint_level)
+        self.anim.finished.connect(lambda: self.button.setStyleSheet(""))   # at rest: the usual look
+        button.toggled.connect(self._toggled)
+
+    def _toggled(self, on):
+        self.anim.stop()
+        if animations_enabled() and self.button.isVisible():
+            self._paint_level(self.level)   # right away: the usual look would jump to the end
+            self.anim.setStartValue(self.level)
+            self.anim.setEndValue(1.0 if on else 0.0)
+            self.anim.start()
+        else:
+            self.level = 1.0 if on else 0.0
+            self.button.setStyleSheet("")
+
+    def _paint_level(self, value):
+        self.level = value
+        css = lambda c: "rgba(%d,%d,%d,%.3f)" % (c.red(), c.green(), c.blue(), c.alphaF())
+        on = theme.qcolor(theme.c(self.on))
+        sheet = f"QPushButton {{ color: {css(_mix(theme.qcolor(theme.c(self.off)), on, value))}; }}"
+        if self.edge:
+            edge = _mix(theme.qcolor(theme.c("divider")), theme.qcolor(theme.c("accent")), value)
+            sheet = (f"QPushButton {{ color: {css(_mix(theme.qcolor(theme.c(self.off)), on, value))};"
+                     f" border: 1px solid {css(edge)}; }}"
+                     f"QPushButton:focus {{ border: 1px solid {theme.c('accent')}; }}")
+        self.button.setStyleSheet(sheet)
+
+
+def fade_checked(button, off="text", on="accent", edge=True):
+    """Switching a chip on or off fades its colors (text `off` to `on`, and the border to the
+    accent if `edge`) instead of flipping them. They must match the button's stylesheet."""
+    button._glow = _CheckedGlow(button, off, on, edge)
+    return button
+
+
+def crossfade(widget, duration=160):
+    """Call right before changing what `widget` shows: the old look fades out over the new.
+    Called again midway, it fades out from what is on screen at that moment."""
+    old = getattr(widget, "_crossfade", None)
+    if not animations_enabled() or not widget.isVisible():
+        return
+    cover = QtWidgets.QLabel(widget)
+    cover.setPixmap(widget.grab())   # includes a cover still fading: no jump
+    cover.setGeometry(widget.rect())
+    cover.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    if old is not None:
+        try:
+            old.deleteLater()
+        except RuntimeError:
+            pass
+    effect = QtWidgets.QGraphicsOpacityEffect(cover)
+    cover.setGraphicsEffect(effect)
+    anim = QtCore.QVariantAnimation(cover)
+    anim.setStartValue(1.0)
+    anim.setEndValue(0.0)
+    anim.setDuration(duration)
+    anim.valueChanged.connect(effect.setOpacity)
+    anim.finished.connect(cover.deleteLater)
+    widget._crossfade = cover
+    cover.show()
+    cover.raise_()
+    anim.start()
+
+
+class TabStrip(QtWidgets.QWidget):
+    """Holds tab buttons (kind "tab") and draws the accent line under the checked one; the line
+    slides to a tab when it is picked, and turns back if another is picked midway."""
+
+    def __init__(self, group, parent=None):
+        super().__init__(parent)
+        self.group = group
+        self._line = None
+        self._anim = QtCore.QVariantAnimation(self)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setDuration(200)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._step)
+        group.idToggled.connect(lambda i, on: on and self._slide())
+
+    def watch(self, button):
+        button.installEventFilter(self)
+        fade_checked(button, off="text2", on="text", edge=False)
+
+    def _target(self):
+        b = self.group.checkedButton()
+        if b is None:
+            return None
+        g = QtCore.QRectF(b.geometry())
+        return QtCore.QRectF(g.left(), g.bottom() - 1, g.width(), 2)
+
+    def _slide(self):
+        target = self._target()
+        if self._line is None or target is None or not self.isVisible() or not animations_enabled():
+            self._anim.stop()
+            self._line = target
+            self.update()
+            return
+        self._from, self._to = QtCore.QRectF(self._line), target
+        self._anim.stop()
+        self._anim.start()
+
+    def _step(self, t):
+        a, b = self._from, self._to
+        mix = lambda x, y: x + (y - x) * t
+        self._line = QtCore.QRectF(mix(a.left(), b.left()), mix(a.top(), b.top()), mix(a.width(), b.width()), 2)
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if (event.type() in (QtCore.QEvent.Type.Move, QtCore.QEvent.Type.Resize)
+                and obj is self.group.checkedButton()
+                and self._anim.state() != QtCore.QAbstractAnimation.State.Running):
+            self._line = self._target()
+            self.update()
+        return False
+
+    def paintEvent(self, event):
+        if self._line is None:
+            self._line = self._target()
+        if self._line is None:
+            return
+        p = QtGui.QPainter(self)
+        p.fillRect(self._line, theme.qcolor(theme.c("accent")))
+        p.end()
+
+
 class Segmented(QtWidgets.QFrame):
-    """One-of-many choice: Once / Daily / Weekly / ..."""
+    """One-of-many choice: Once / Daily / Weekly / ... The highlight slides over to the
+    option picked; a click midway sends it on from wherever it is."""
     changed = QtCore.pyqtSignal(int)
 
     def __init__(self, options, parent=None):
@@ -432,12 +685,22 @@ class Segmented(QtWidgets.QFrame):
             b = QtWidgets.QPushButton(text)
             b.setProperty("kind", "segment")
             b.setCheckable(True)
+            fade_checked(b, off="text2", on="text", edge=False)
             b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             b.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
             self.group.addButton(b, i)
             lay.addWidget(b)
+            b.installEventFilter(self)   # buttons laid out anew: the highlight follows
         self.group.button(0).setChecked(True)
         self.group.idClicked.connect(self.changed)
+        self.group.idToggled.connect(lambda i, on: on and self._slide())
+        self._pill = None   # where the highlight is drawn (QRectF), None until laid out
+        self._anim = QtCore.QVariantAnimation(self)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setDuration(200)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._step)
 
     def index(self):
         return self.group.checkedId()
@@ -445,6 +708,54 @@ class Segmented(QtWidgets.QFrame):
     def set_index(self, i):
         self.group.button(i).setChecked(True)
         self.changed.emit(i)
+
+    def slide_from(self, rect):
+        """A copy that replaces another one: the highlight sets off from where the old one's was."""
+        if rect is not None:
+            self._pill = QtCore.QRectF(rect)
+            self._slide()
+
+    def _target(self):
+        b = self.group.checkedButton()
+        return QtCore.QRectF(b.geometry()) if b is not None else None
+
+    def _slide(self):
+        target = self._target()
+        if (self._pill is None or target is None or not self.isVisible() or not animations_enabled()):
+            self._anim.stop()
+            self._pill = target
+            self.update()
+            return
+        self._from, self._to = QtCore.QRectF(self._pill), target
+        self._anim.stop()
+        self._anim.start()
+
+    def _step(self, t):
+        a, b = self._from, self._to
+        mix = lambda x, y: x + (y - x) * t
+        self._pill = QtCore.QRectF(mix(a.left(), b.left()), mix(a.top(), b.top()),
+                                   mix(a.width(), b.width()), mix(a.height(), b.height()))
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if (event.type() in (QtCore.QEvent.Type.Move, QtCore.QEvent.Type.Resize)
+                and obj is self.group.checkedButton()
+                and self._anim.state() != QtCore.QAbstractAnimation.State.Running):
+            self._pill = self._target()
+            self.update()
+        return False
+
+    def paintEvent(self, event):
+        super().paintEvent(event)   # the track: background and border from the stylesheet
+        if self._pill is None:
+            self._pill = self._target()
+        if self._pill is not None:
+            p = QtGui.QPainter(self)
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(theme.qcolor(theme.c("selected")))
+            p.drawRoundedRect(self._pill, 6, 6)
+            p.end()
 
 
 class Toggle(QtWidgets.QAbstractButton):
@@ -458,12 +769,14 @@ class Toggle(QtWidgets.QAbstractButton):
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self._pos = 0.0
         self._anim = QtCore.QPropertyAnimation(self, b"thumb", self)
-        self._anim.setDuration(150)
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
         self.toggled.connect(self._animate)
 
     def _animate(self, on):
         # Slide only when the user flips it; when set up before showing, jump into place
         if animations_enabled() and self.isVisible():
+            self._anim.stop()   # flipped again midway: from where the thumb is now
             self._anim.setStartValue(self._pos)
             self._anim.setEndValue(1.0 if on else 0.0)
             self._anim.start()
@@ -483,14 +796,17 @@ class Toggle(QtWidgets.QAbstractButton):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         r = QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        on = self.isChecked()
-        p.setPen(QtGui.QPen(theme.qcolor(theme.c("accent") if on else theme.c("muted")), 1))
-        p.setBrush(theme.qcolor(theme.c("accent")) if on else QtCore.Qt.BrushStyle.NoBrush)
+        t = self._pos   # colors follow the thumb: off at 0, on at 1
+        accent, muted = theme.qcolor(theme.c("accent")), theme.qcolor(theme.c("muted"))
+        fill = QtGui.QColor(accent)
+        fill.setAlphaF(fill.alphaF() * t)
+        p.setPen(QtGui.QPen(_mix(muted, accent, t), 1))
+        p.setBrush(fill)
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
         d = r.height() - 8
         x = r.left() + 4 + self._pos * (r.width() - 8 - d)
         p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(theme.qcolor(theme.c("on_accent") if on else theme.c("muted")))
+        p.setBrush(_mix(muted, theme.qcolor(theme.c("on_accent")), t))
         p.drawEllipse(QtCore.QRectF(x, r.center().y() - d / 2, d, d))
         p.end()
 
@@ -528,6 +844,25 @@ class ColorSwatch(QtWidgets.QAbstractButton):
         self.setAccessibleName(tooltip)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
+        self._level = 0.0   # 0 not picked .. 1 picked: the ring fades between
+        self._anim = QtCore.QVariantAnimation(self)
+        self._anim.setDuration(170)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._set_level)
+        self.toggled.connect(self._toggled)
+
+    def _set_level(self, value):
+        self._level = value
+        self.update()
+
+    def _toggled(self, on):
+        self._anim.stop()   # picked again midway: back from where it is
+        if animations_enabled() and self.isVisible():
+            self._anim.setStartValue(self._level)
+            self._anim.setEndValue(1.0 if on else 0.0)
+            self._anim.start()
+        else:
+            self._set_level(1.0 if on else 0.0)
 
     def enterEvent(self, event):
         self.update()
@@ -551,9 +886,14 @@ class ColorSwatch(QtWidgets.QAbstractButton):
             p.setPen(QtCore.Qt.PenStyle.NoPen)
             p.setBrush(color)
             p.drawEllipse(inner)
-        if self.isChecked() or self.underMouse() or self.hasFocus():
-            ring = theme.qcolor(theme.c("text" if self.isChecked() else "muted"))
-            p.setPen(QtGui.QPen(ring, 2 if self.isChecked() else 1))
+        hover = self.underMouse() or self.hasFocus()
+        level = self._level
+        if level > 0.001 or hover:
+            ring = theme.qcolor(theme.c("muted"))
+            if not hover:
+                ring.setAlphaF(ring.alphaF() * level)   # no hover ring underneath: fade from nothing
+            ring = _mix(ring, theme.qcolor(theme.c("text")), level)
+            p.setPen(QtGui.QPen(ring, 1 + level))
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             p.drawEllipse(r.adjusted(2, 2, -2, -2))
         p.end()
@@ -671,12 +1011,7 @@ class _DropDown(QtWidgets.QFrame):
 
     def showEvent(self, event):
         super().showEvent(event)
-        zoom_window(self, True, origin=getattr(self, "_origin", 0.0))
-
-    def closeEvent(self, event):
-        if self.isVisible():
-            zoom_window(self, False, origin=getattr(self, "_origin", 0.0))
-        super().closeEvent(event)
+        zoom_in(self, origin=getattr(self, "_origin", 0.0))
 
 
 class DatePopup(_DropDown):

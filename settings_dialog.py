@@ -43,6 +43,9 @@ class SettingsDialog(GlassDialog):
     # ----- layout (rebuilt after every appearance change, so sizes and colors update at once) -----
 
     def _build(self):
+        # Where each choice's highlight is: the rebuilt ones slide on from there
+        carry = {name: getattr(self, name)._pill for name in ("theme_choice", "size_choice", "week_choice")
+                 if self.body is not None}
         if self.body is not None:
             self.pending["autostart"] = self.autostart.isChecked()
             self.pending["interval"] = self.interval.value()
@@ -125,6 +128,8 @@ class SettingsDialog(GlassDialog):
         self.outer.addWidget(self.body)
         self.adjustSize()
         self.update()
+        if carry:   # once the new copies are laid out
+            QtCore.QTimer.singleShot(0, lambda: [getattr(self, name).slide_from(rect) for name, rect in carry.items()])
 
     def _segmented(self, root, title, options, index, key, values):
         root.addWidget(label(title, "field"))
